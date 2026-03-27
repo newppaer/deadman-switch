@@ -61,7 +61,7 @@
             android:name=".service.MonitorService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="specialUse" />
+            android:foregroundServiceType="dataSync" />
 
     </application>
 </manifest>

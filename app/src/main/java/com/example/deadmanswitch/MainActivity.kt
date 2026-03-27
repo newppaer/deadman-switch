@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -253,12 +254,21 @@ fun MainScreen() {
 
     // 崩溃日志
     if (showCrashLog && crashLog.isNotEmpty()) {
+        val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
         AlertDialog(
-            onDismissRequest = { showCrashLog = false; CrashLogger.clearLog(context); crashLog = "" },
+            onDismissRequest = { showCrashLog = false },
             title = { Text("⚠️ 上次崩溃报告") },
             text = {
-                LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
-                    item { Text(crashLog, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+                Column {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = {
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(crashLog))
+                            Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                        }) { Text("📋 复制全部") }
+                    }
+                    LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                        item { SelectionContainer { Text(crashLog, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) } }
+                    }
                 }
             },
             confirmButton = { TextButton(onClick = { showCrashLog = false; CrashLogger.clearLog(context); crashLog = "" }) { Text("关闭并清除") } },
