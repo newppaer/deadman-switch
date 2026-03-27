@@ -18,26 +18,10 @@ jobs:
         distribution: 'temurin'
     
     - name: Build APK
-      continue-on-error: true
-      id: build
       run: |
         chmod +x gradlew
-        ./gradlew assembleDebug --no-daemon 2>&1 | tee /tmp/build.log
-        
-    - name: Create issue with build log
-      if: always()
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        LOG=$(tail -30 /tmp/build.log 2>/dev/null || echo "No log")
-        echo "Build exit: ${{ steps.build.outcome }}"
-        echo "Last 30 lines:"
-        echo "$LOG"
-        gh api repos/${{ github.repository }}/issues \
-          --method POST \
-          -f title="Build Log ${{ github.sha }}" \
-          -f body="**Status:** ${{ steps.build.outcome }}\n\n\`\`\`\n$LOG\n\`\`\`" || true
-        
+        ./gradlew assembleDebug --no-daemon
+    
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
