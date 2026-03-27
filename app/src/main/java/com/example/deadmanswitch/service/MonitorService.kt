@@ -15,7 +15,9 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.deadmanswitch.MainActivity
 import com.example.deadmanswitch.data.ActivityLogManager
+import com.example.deadmanswitch.data.ContactManager
 import com.example.deadmanswitch.data.SettingsManager
+import com.example.deadmanswitch.push.PushManager
 
 class MonitorService : Service() {
     private val handler = Handler(Looper.getMainLooper())
@@ -207,6 +209,46 @@ class MonitorService : Service() {
         val hours = elapsedMs / (1000 * 60 * 60)
         activityLog.addEntry("alert")
 
+        // 推送消息内容
+        val alertMsg = "⚠️ DeadManSwitch 警报\n已超过 ${hours} 小时未检测到活动，可能遇到紧急情况。"
+
+        // 1. 短信推送（如果开启）
+        try {
+            val contactManager = ContactManager(this)
+            if (contactManager.isSmsEnabled()) {
+                contactManager.sendAlertSms(hours)
+                Log.d(TAG, "SMS sent to contacts")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "SMS push failed", e)
+        }
+
+        // 2. 企业微信 Webhook 推送
+        try {
+            val webhookUrl = settings.wecomWebhookUrl
+            if (webhookUrl.isNotBlank()) {
+                PushManager.sendWeChatWork(webhookUrl, alertMsg)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "WeChatWork push failed", e)
+        }
+
+        // 3. OpenClaw API 推送
+        try {
+            val apiUrl = settings.openclawApiUrl
+            if (apiUrl.isNotBlank()) {
+                PushManager.sendHttpPost(
+                    apiUrl = apiUrl,
+                    token = settings.openclawToken,
+                    title = "DeadManSwitch 警报",
+                    content = alertMsg
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "OpenClaw push failed", e)
+        }
+
+        // 本地通知
         try {
             val notification = NotificationCompat.Builder(this, "alert_channel")
                 .setContentTitle("⚠️ 安全警报")

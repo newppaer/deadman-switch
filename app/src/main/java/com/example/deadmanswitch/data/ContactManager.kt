@@ -59,7 +59,7 @@ class ContactManager(context: Context) {
         }
     }
 
-    fun isSmsEnabled(): Boolean = prefs.getBoolean(KEY_SMS_ENABLED, true)
+    fun isSmsEnabled(): Boolean = prefs.getBoolean(KEY_SMS_ENABLED, false)
 
     fun setSmsEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_SMS_ENABLED, enabled).apply()

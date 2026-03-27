@@ -13,6 +13,9 @@ class SettingsManager(context: Context) {
         const val KEY_AUTO_START = "auto_start"
         const val KEY_LAST_ALERT_TIME = "last_alert_time"
         const val KEY_DARK_MODE = "dark_mode"
+        const val KEY_WECOM_WEBHOOK = "wecom_webhook_url"
+        const val KEY_OPENCLAW_API_URL = "openclaw_api_url"
+        const val KEY_OPENCLAW_TOKEN = "openclaw_token"
         const val DEFAULT_THRESHOLD = 12f
     }
 
@@ -39,6 +42,21 @@ class SettingsManager(context: Context) {
     var darkMode: Int
         get() = prefs.getInt(KEY_DARK_MODE, 0) // 0=跟随系统, 1=亮色, 2=暗色
         set(value) = prefs.edit().putInt(KEY_DARK_MODE, value).apply()
+
+    // 企业微信 Webhook URL
+    var wecomWebhookUrl: String
+        get() = prefs.getString(KEY_WECOM_WEBHOOK, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_WECOM_WEBHOOK, value).apply()
+
+    // OpenClaw API URL
+    var openclawApiUrl: String
+        get() = prefs.getString(KEY_OPENCLAW_API_URL, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_OPENCLAW_API_URL, value).apply()
+
+    // OpenClaw Token（可选）
+    var openclawToken: String
+        get() = prefs.getString(KEY_OPENCLAW_TOKEN, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_OPENCLAW_TOKEN, value).apply()
 
     val thresholdMs: Long
         get() = (thresholdHours * 60 * 60 * 1000).toLong()
