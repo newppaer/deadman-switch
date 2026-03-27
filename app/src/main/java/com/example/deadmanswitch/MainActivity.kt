@@ -1,9 +1,15 @@
 package com.example.deadmanswitch
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.example.deadmanswitch.data.ActivityEntry
 import com.example.deadmanswitch.data.ActivityLogManager
 import com.example.deadmanswitch.data.SettingsManager
@@ -45,7 +52,6 @@ fun MainScreen() {
 
     var isMonitoring by remember { mutableStateOf(MonitorService.isRunning(context)) }
     var thresholdHours by remember { mutableFloatStateOf(settings.thresholdHours) }
-    var lastActivityTime by remember { mutableLongStateOf(settings.lastActivityTime) }
     var showStopDialog by remember { mutableStateOf(false) }
     var logEntries by remember { mutableStateOf(activityLog.getAll().take(20)) }
 
@@ -53,17 +59,39 @@ fun MainScreen() {
     var remainingMs by remember { mutableLongStateOf(settings.remainingMs) }
     var remainingPercent by remember { mutableFloatStateOf(settings.remainingPercent) }
 
+    // 权限请求
+    val permissionsNeeded = remember {
+        mutableListOf<String>().apply {
+            add(Manifest.permission.SEND_SMS)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }.toTypedArray()
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        val granted = results.values.all { it }
+        if (granted) {
+            // 权限通过，启动监控
+            context.startForegroundService(Intent(context, MonitorService::class.java))
+            isMonitoring = true
+            activityLog.addEntry("monitor_start")
+            refreshLog(activityLog) { logEntries = it }
+            Toast.makeText(context, "监控已启动", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "需要短信和通知权限才能正常工作", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // 实时倒计时协程
     LaunchedEffect(isMonitoring) {
         while (isMonitoring) {
             remainingMs = settings.remainingMs
             remainingPercent = settings.remainingPercent
             delay(1000)
         }
-    }
-
-    // 刷新活动日志
-    fun refreshLog() {
-        logEntries = activityLog.getAll().take(20)
     }
 
     Scaffold(
@@ -92,156 +120,54 @@ fun MainScreen() {
         ) {
             item { Spacer(modifier = Modifier.height(8.dp)) }
 
-            // 状态卡片 - 大号倒计时 + 进度条
+            // 状态卡片
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = when {
-                            !isMonitoring -> MaterialTheme.colorScheme.errorContainer
-                            remainingPercent > 0.8f -> MaterialTheme.colorScheme.errorContainer
-                            remainingPercent > 0.5f -> MaterialTheme.colorScheme.tertiaryContainer
-                            else -> MaterialTheme.colorScheme.primaryContainer
-                        }
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = if (isMonitoring) "🛡️ 监控中" else "🔴 已停止",
-                            style = MaterialTheme.typography.headlineMedium
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        if (isMonitoring) {
-                            val h = remainingMs / (1000 * 60 * 60)
-                            val m = (remainingMs % (1000 * 60 * 60)) / (1000 * 60)
-                            val s = (remainingMs % (1000 * 60)) / 1000
-
-                            Text(
-                                text = String.format("%02d:%02d:%02d", h, m, s),
-                                style = MaterialTheme.typography.displayMedium,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Text(
-                                text = "距离警报触发",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            LinearProgressIndicator(
-                                progress = { remainingPercent },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(8.dp),
-                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                            )
-
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "已用 ${(remainingPercent * 100).toInt()}% | 阈值 ${thresholdHours.toInt()}h",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            Text(
-                                text = "点击下方按钮开始监控",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-                }
+                StatusCard(
+                    isMonitoring = isMonitoring,
+                    remainingMs = remainingMs,
+                    remainingPercent = remainingPercent,
+                    thresholdHours = thresholdHours
+                )
             }
 
             // 阈值设置
             item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("无活动阈值", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "${thresholdHours.toInt()} 小时",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        Text(
-                            "超过此时间无活动将触发警报",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Slider(
-                            value = thresholdHours,
-                            onValueChange = {
-                                thresholdHours = it
-                                settings.thresholdHours = it
-                            },
-                            valueRange = 1f..48f,
-                            steps = 47,
-                            enabled = !isMonitoring
-                        )
+                ThresholdCard(
+                    thresholdHours = thresholdHours,
+                    isMonitoring = isMonitoring,
+                    onThresholdChange = {
+                        thresholdHours = it
+                        settings.thresholdHours = it
                     }
-                }
+                )
             }
 
             // 控制按钮
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    if (isMonitoring) {
-                        Button(
-                            onClick = { showStopDialog = true },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
-                            )
-                        ) {
-                            Text("停止监控")
+                ControlButtons(
+                    isMonitoring = isMonitoring,
+                    onStartClick = {
+                        val hasPermissions = permissionsNeeded.all {
+                            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
                         }
-                    } else {
-                        Button(
-                            onClick = {
-                                context.startForegroundService(
-                                    Intent(context, MonitorService::class.java)
-                                )
-                                isMonitoring = true
-                                remainingMs = settings.remainingMs
-                                remainingPercent = settings.remainingPercent
-                                refreshLog()
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("开始监控")
+                        if (hasPermissions) {
+                            context.startForegroundService(Intent(context, MonitorService::class.java))
+                            isMonitoring = true
+                            activityLog.addEntry("monitor_start")
+                            refreshLog(activityLog) { logEntries = it }
+                        } else {
+                            permissionLauncher.launch(permissionsNeeded)
                         }
+                    },
+                    onStopClick = { showStopDialog = true },
+                    onResetClick = {
+                        settings.resetActivity()
+                        remainingMs = settings.remainingMs
+                        remainingPercent = settings.remainingPercent
+                        activityLog.addEntry("manual_reset")
+                        refreshLog(activityLog) { logEntries = it }
                     }
-
-                    OutlinedButton(
-                        onClick = {
-                            settings.resetActivity()
-                            lastActivityTime = settings.lastActivityTime
-                            remainingMs = settings.remainingMs
-                            remainingPercent = settings.remainingPercent
-                            activityLog.addEntry("manual_reset")
-                            refreshLog()
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("手动重置")
-                    }
-                }
+                )
             }
 
             // 活动历史
@@ -253,7 +179,7 @@ fun MainScreen() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("活动历史", style = MaterialTheme.typography.titleMedium)
-                    TextButton(onClick = { refreshLog() }) {
+                    TextButton(onClick = { refreshLog(activityLog) { logEntries = it } }) {
                         Text("刷新")
                     }
                 }
@@ -289,7 +215,8 @@ fun MainScreen() {
                         context.stopService(Intent(context, MonitorService::class.java))
                         isMonitoring = false
                         showStopDialog = false
-                        refreshLog()
+                        activityLog.addEntry("monitor_stop")
+                        refreshLog(activityLog) { logEntries = it }
                     }
                 ) { Text("确认停止", color = MaterialTheme.colorScheme.error) }
             },
@@ -301,15 +228,166 @@ fun MainScreen() {
 }
 
 @Composable
+fun StatusCard(
+    isMonitoring: Boolean,
+    remainingMs: Long,
+    remainingPercent: Float,
+    thresholdHours: Float
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                !isMonitoring -> MaterialTheme.colorScheme.errorContainer
+                remainingPercent > 0.8f -> MaterialTheme.colorScheme.errorContainer
+                remainingPercent > 0.5f -> MaterialTheme.colorScheme.tertiaryContainer
+                else -> MaterialTheme.colorScheme.primaryContainer
+            }
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = if (isMonitoring) "🛡️ 监控中" else "🔴 已停止",
+                style = MaterialTheme.typography.headlineMedium
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (isMonitoring) {
+                val h = remainingMs / (1000 * 60 * 60)
+                val m = (remainingMs % (1000 * 60 * 60)) / (1000 * 60)
+                val s = (remainingMs % (1000 * 60)) / 1000
+
+                Text(
+                    text = String.format("%02d:%02d:%02d", h, m, s),
+                    style = MaterialTheme.typography.displayMedium,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    text = "距离警报触发",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                LinearProgressIndicator(
+                    progress = { remainingPercent },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp),
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "已用 ${(remainingPercent * 100).toInt()}% | 阈值 ${thresholdHours.toInt()}h",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    text = "点击下方按钮开始监控",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ThresholdCard(
+    thresholdHours: Float,
+    isMonitoring: Boolean,
+    onThresholdChange: (Float) -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("无活动阈值", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "${thresholdHours.toInt()} 小时",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Text(
+                "超过此时间无活动将触发警报",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Slider(
+                value = thresholdHours,
+                onValueChange = onThresholdChange,
+                valueRange = 1f..48f,
+                steps = 47,
+                enabled = !isMonitoring
+            )
+        }
+    }
+}
+
+@Composable
+fun ControlButtons(
+    isMonitoring: Boolean,
+    onStartClick: () -> Unit,
+    onStopClick: () -> Unit,
+    onResetClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        if (isMonitoring) {
+            Button(
+                onClick = onStopClick,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Text("停止监控")
+            }
+        } else {
+            Button(
+                onClick = onStartClick,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("开始监控")
+            }
+        }
+
+        OutlinedButton(
+            onClick = onResetClick,
+            modifier = Modifier.weight(1f)
+        ) {
+            Text("手动重置")
+        }
+    }
+}
+
+@Composable
 fun ActivityLogItem(entry: ActivityEntry) {
     val typeLabel = when (entry.type) {
         "unlock" -> "🔓 解锁屏幕"
-        "boot" -> "🔄 开机"
+        "boot" -> "🔄 开机启动"
         "manual_reset" -> "👆 手动重置"
         "alert" -> "⚠️ 触发警报"
+        "alert_sms" -> "📱 已发送短信通知"
         "monitor_start" -> "▶️ 开始监控"
         "monitor_stop" -> "⏹ 停止监控"
-        else -> entry.type
+        "threshold_change" -> "⚙️ 修改阈值"
+        "service_restart" -> "🔄 服务自动重启"
+        else -> "📌 ${entry.type}"
     }
 
     val sdf = remember { SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()) }
@@ -332,7 +410,6 @@ fun ActivityLogItem(entry: ActivityEntry) {
     }
 }
 
-private fun formatTime(timestamp: Long): String {
-    val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
-    return sdf.format(Date(timestamp))
+private fun refreshLog(log: ActivityLogManager, onUpdate: (List<ActivityEntry>) -> Unit = {}) {
+    onUpdate(log.getAll().take(20))
 }

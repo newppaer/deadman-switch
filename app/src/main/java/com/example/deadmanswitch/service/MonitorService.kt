@@ -11,7 +11,6 @@ import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.example.deadmanswitch.MainActivity
-import com.example.deadmanswitch.R
 import com.example.deadmanswitch.data.ActivityLogManager
 import com.example.deadmanswitch.data.ContactManager
 import com.example.deadmanswitch.data.SettingsManager
@@ -70,6 +69,15 @@ class MonitorService : Service() {
         return START_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // 应用被划掉时自动重启服务
+        val restartIntent = Intent(applicationContext, MonitorService::class.java)
+        restartIntent.setPackage(packageName)
+        startForegroundService(restartIntent)
+        activityLog.addEntry("service_restart")
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         settings.isMonitoring = false
@@ -81,6 +89,18 @@ class MonitorService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun createStatusNotification(): Notification {
+        val elapsedMs = System.currentTimeMillis() - settings.lastActivityTime
+        val thresholdMs = settings.thresholdMs
+        val remainingMs = (thresholdMs - elapsedMs).coerceAtLeast(0)
+        val hours = remainingMs / (1000 * 60 * 60)
+        val minutes = (remainingMs % (1000 * 60 * 60)) / (1000 * 60)
+
+        val text = if (remainingMs > 0) {
+            "剩余 ${hours}时${minutes}分 | 阈值 ${settings.thresholdHours.toInt()}h"
+        } else {
+            "⚠️ 已超过阈值"
+        }
+
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -90,7 +110,7 @@ class MonitorService : Service() {
 
         return NotificationCompat.Builder(this, "monitor_channel")
             .setContentTitle("🛡️ DeadManSwitch 运行中")
-            .setContentText("阈值: ${settings.thresholdHours.toInt()}小时 | 点击查看状态")
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
@@ -101,7 +121,7 @@ class MonitorService : Service() {
         val elapsedMs = System.currentTimeMillis() - settings.lastActivityTime
         val thresholdMs = settings.thresholdMs
 
-        // 更新前台通知，显示剩余时间
+        // 更新前台通知
         updateStatusNotification(elapsedMs, thresholdMs)
 
         if (elapsedMs >= thresholdMs) {
@@ -120,27 +140,32 @@ class MonitorService : Service() {
             "⚠️ 已超过阈值！"
         }
 
-        val notification = NotificationCompat.Builder(this, "monitor_channel")
-            .setContentTitle("🛡️ DeadManSwitch 运行中")
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setOngoing(true)
-            .setContentIntent(
-                PendingIntent.getActivity(
-                    this, 0,
-                    Intent(this, MainActivity::class.java),
-                    PendingIntent.FLAG_IMMUTABLE
+        try {
+            val notification = NotificationCompat.Builder(this, "monitor_channel")
+                .setContentTitle("🛡️ DeadManSwitch 运行中")
+                .setContentText(text)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setOngoing(true)
+                .setContentIntent(
+                    PendingIntent.getActivity(
+                        this, 0,
+                        Intent(this, MainActivity::class.java),
+                        PendingIntent.FLAG_IMMUTABLE
+                    )
                 )
-            )
-            .build()
+                .build()
 
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        manager.notify(1, notification)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            manager.notify(1, notification)
+        } catch (_: Exception) {
+            // 忽略通知更新失败
+        }
     }
 
     private fun triggerAlert(elapsedMs: Long) {
-        // 去重：30分钟内不重复报警
         val now = System.currentTimeMillis()
+
+        // 去重：30分钟内不重复报警
         if (now - settings.lastAlertTime < ALERT_COOLDOWN_MS) return
         settings.lastAlertTime = now
 
@@ -148,26 +173,40 @@ class MonitorService : Service() {
         activityLog.addEntry("alert")
 
         // 发通知
-        val alertIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 1, alertIntent, PendingIntent.FLAG_IMMUTABLE
-        )
+        try {
+            val alertIntent = Intent(this, MainActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this, 1, alertIntent, PendingIntent.FLAG_IMMUTABLE
+            )
 
-        val notification = NotificationCompat.Builder(this, "alert_channel")
-            .setContentTitle("⚠️ 安全警报")
-            .setContentText("已超过 ${hours} 小时未检测到活动！")
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setVibrate(longArrayOf(0, 500, 200, 500, 200, 500))
-            .setContentIntent(pendingIntent)
-            .setAutoCancel(false)
-            .build()
+            val notification = NotificationCompat.Builder(this, "alert_channel")
+                .setContentTitle("⚠️ 安全警报")
+                .setContentText("已超过 ${hours} 小时未检测到活动！")
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setVibrate(longArrayOf(0, 500, 200, 500, 200, 500))
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(false)
+                .build()
 
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        manager.notify(999, notification)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            manager.notify(999, notification)
+        } catch (_: Exception) {
+            // 忽略通知失败
+        }
 
         // 发短信给紧急联系人
-        contactManager.sendAlertSms(hours)
+        val contacts = contactManager.getAll().filter { it.enabled }
+        if (contacts.isNotEmpty() && contactManager.isSmsEnabled()) {
+            try {
+                contactManager.sendAlertSms(hours)
+                activityLog.addEntry("alert_sms")
+            } catch (_: SecurityException) {
+                activityLog.addEntry("alert_sms_denied")
+            } catch (_: Exception) {
+                activityLog.addEntry("alert_sms_error")
+            }
+        }
     }
 }
