@@ -55,42 +55,44 @@ fun MainScreen() {
     var showStopDialog by remember { mutableStateOf(false) }
     var logEntries by remember { mutableStateOf(activityLog.getAll().take(20)) }
 
-    // 实时更新倒计时
     var remainingMs by remember { mutableLongStateOf(settings.remainingMs) }
     var remainingPercent by remember { mutableFloatStateOf(settings.remainingPercent) }
 
-    // 权限请求
-    val permissionsNeeded = remember {
-        mutableListOf<String>().apply {
-            add(Manifest.permission.SEND_SMS)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }.toTypedArray()
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        val granted = results.values.all { it }
+    // 通知权限请求（Android 13+）
+    val needsNotificationPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
         if (granted) {
-            // 权限通过，启动监控
             context.startForegroundService(Intent(context, MonitorService::class.java))
             isMonitoring = true
             activityLog.addEntry("monitor_start")
             refreshLog(activityLog) { logEntries = it }
             Toast.makeText(context, "监控已启动", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(context, "需要短信和通知权限才能正常工作", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "需要通知权限才能正常工作", Toast.LENGTH_LONG).show()
         }
     }
 
-    // 实时倒计时协程
     LaunchedEffect(isMonitoring) {
         while (isMonitoring) {
             remainingMs = settings.remainingMs
             remainingPercent = settings.remainingPercent
             delay(1000)
+        }
+    }
+
+    fun startMonitoring() {
+        if (needsNotificationPermission &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            context.startForegroundService(Intent(context, MonitorService::class.java))
+            isMonitoring = true
+            activityLog.addEntry("monitor_start")
+            refreshLog(activityLog) { logEntries = it }
         }
     }
 
@@ -120,7 +122,6 @@ fun MainScreen() {
         ) {
             item { Spacer(modifier = Modifier.height(8.dp)) }
 
-            // 状态卡片
             item {
                 StatusCard(
                     isMonitoring = isMonitoring,
@@ -130,7 +131,6 @@ fun MainScreen() {
                 )
             }
 
-            // 阈值设置
             item {
                 ThresholdCard(
                     thresholdHours = thresholdHours,
@@ -142,23 +142,10 @@ fun MainScreen() {
                 )
             }
 
-            // 控制按钮
             item {
                 ControlButtons(
                     isMonitoring = isMonitoring,
-                    onStartClick = {
-                        val hasPermissions = permissionsNeeded.all {
-                            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-                        }
-                        if (hasPermissions) {
-                            context.startForegroundService(Intent(context, MonitorService::class.java))
-                            isMonitoring = true
-                            activityLog.addEntry("monitor_start")
-                            refreshLog(activityLog) { logEntries = it }
-                        } else {
-                            permissionLauncher.launch(permissionsNeeded)
-                        }
-                    },
+                    onStartClick = { startMonitoring() },
                     onStopClick = { showStopDialog = true },
                     onResetClick = {
                         settings.resetActivity()
@@ -267,18 +254,13 @@ fun StatusCard(
                     style = MaterialTheme.typography.displayMedium,
                     fontFamily = FontFamily.Monospace
                 )
-                Text(
-                    text = "距离警报触发",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Text("距离警报触发", style = MaterialTheme.typography.bodySmall)
 
                 Spacer(modifier = Modifier.height(12.dp))
 
                 LinearProgressIndicator(
                     progress = { remainingPercent },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(8.dp),
+                    modifier = Modifier.fillMaxWidth().height(8.dp),
                     trackColor = MaterialTheme.colorScheme.surfaceVariant,
                 )
 
@@ -289,10 +271,7 @@ fun StatusCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
-                Text(
-                    text = "点击下方按钮开始监控",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Text("点击下方按钮开始监控", style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
@@ -309,10 +288,7 @@ fun ThresholdCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("无活动阈值", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "${thresholdHours.toInt()} 小时",
@@ -343,35 +319,17 @@ fun ControlButtons(
     onStopClick: () -> Unit,
     onResetClick: () -> Unit
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (isMonitoring) {
             Button(
                 onClick = onStopClick,
                 modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error
-                )
-            ) {
-                Text("停止监控")
-            }
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) { Text("停止监控") }
         } else {
-            Button(
-                onClick = onStartClick,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("开始监控")
-            }
+            Button(onClick = onStartClick, modifier = Modifier.weight(1f)) { Text("开始监控") }
         }
-
-        OutlinedButton(
-            onClick = onResetClick,
-            modifier = Modifier.weight(1f)
-        ) {
-            Text("手动重置")
-        }
+        OutlinedButton(onClick = onResetClick, modifier = Modifier.weight(1f)) { Text("手动重置") }
     }
 }
 
@@ -379,13 +337,12 @@ fun ControlButtons(
 fun ActivityLogItem(entry: ActivityEntry) {
     val typeLabel = when (entry.type) {
         "unlock" -> "🔓 解锁屏幕"
+        "lock" -> "🔒 锁定屏幕"
         "boot" -> "🔄 开机启动"
         "manual_reset" -> "👆 手动重置"
         "alert" -> "⚠️ 触发警报"
-        "alert_sms" -> "📱 已发送短信通知"
         "monitor_start" -> "▶️ 开始监控"
         "monitor_stop" -> "⏹ 停止监控"
-        "threshold_change" -> "⚙️ 修改阈值"
         "service_restart" -> "🔄 服务自动重启"
         else -> "📌 ${entry.type}"
     }
@@ -394,9 +351,7 @@ fun ActivityLogItem(entry: ActivityEntry) {
     val timeStr = sdf.format(Date(entry.timestamp))
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {

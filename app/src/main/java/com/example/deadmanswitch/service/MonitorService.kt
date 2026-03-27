@@ -12,14 +12,12 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.example.deadmanswitch.MainActivity
 import com.example.deadmanswitch.data.ActivityLogManager
-import com.example.deadmanswitch.data.ContactManager
 import com.example.deadmanswitch.data.SettingsManager
 
 class MonitorService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var settings: SettingsManager
     private lateinit var activityLog: ActivityLogManager
-    private lateinit var contactManager: ContactManager
     private lateinit var wakeLock: PowerManager.WakeLock
 
     companion object {
@@ -44,7 +42,6 @@ class MonitorService : Service() {
         super.onCreate()
         settings = SettingsManager(this)
         activityLog = ActivityLogManager(this)
-        contactManager = ContactManager(this)
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(
@@ -120,8 +117,6 @@ class MonitorService : Service() {
     private fun checkActivity() {
         val elapsedMs = System.currentTimeMillis() - settings.lastActivityTime
         val thresholdMs = settings.thresholdMs
-
-        // 更新前台通知
         updateStatusNotification(elapsedMs, thresholdMs)
 
         if (elapsedMs >= thresholdMs) {
@@ -157,9 +152,7 @@ class MonitorService : Service() {
 
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             manager.notify(1, notification)
-        } catch (_: Exception) {
-            // 忽略通知更新失败
-        }
+        } catch (_: Exception) {}
     }
 
     private fun triggerAlert(elapsedMs: Long) {
@@ -192,21 +185,6 @@ class MonitorService : Service() {
 
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             manager.notify(999, notification)
-        } catch (_: Exception) {
-            // 忽略通知失败
-        }
-
-        // 发短信给紧急联系人
-        val contacts = contactManager.getAll().filter { it.enabled }
-        if (contacts.isNotEmpty() && contactManager.isSmsEnabled()) {
-            try {
-                contactManager.sendAlertSms(hours)
-                activityLog.addEntry("alert_sms")
-            } catch (_: SecurityException) {
-                activityLog.addEntry("alert_sms_denied")
-            } catch (_: Exception) {
-                activityLog.addEntry("alert_sms_error")
-            }
-        }
+        } catch (_: Exception) {}
     }
 }

@@ -7,8 +7,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="android.permission.SEND_SMS" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <application
         android:name=".DeadManApp"
@@ -39,12 +37,13 @@
             android:theme="@style/Theme.DeadManSwitch"
             android:parentActivityName=".MainActivity" />
 
-        <!-- 屏幕解锁监听 -->
+        <!-- 屏幕解锁/锁屏监听 -->
         <receiver
             android:name=".receiver.ScreenUnlockReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.USER_PRESENT" />
+                <action android:name="android.intent.action.SCREEN_OFF" />
             </intent-filter>
         </receiver>
 

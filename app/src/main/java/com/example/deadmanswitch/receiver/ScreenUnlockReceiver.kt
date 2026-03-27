@@ -8,10 +8,17 @@ import com.example.deadmanswitch.data.SettingsManager
 
 class ScreenUnlockReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_USER_PRESENT) {
-            val settings = SettingsManager(context)
-            settings.resetActivity()
-            ActivityLogManager(context).addEntry("unlock")
+        when (intent.action) {
+            Intent.ACTION_USER_PRESENT -> {
+                // 解锁屏幕
+                val settings = SettingsManager(context)
+                settings.resetActivity()
+                ActivityLogManager(context).addEntry("unlock")
+            }
+            Intent.ACTION_SCREEN_OFF -> {
+                // 锁屏
+                ActivityLogManager(context).addEntry("lock")
+            }
         }
     }
 }
