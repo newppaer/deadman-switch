@@ -3,8 +3,10 @@ package com.example.deadmanswitch.service
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -21,15 +23,41 @@ class MonitorService : Service() {
     private lateinit var activityLog: ActivityLogManager
     private var wakeLock: PowerManager.WakeLock? = null
 
+    // 动态注册屏幕锁屏广播接收器（Android 10+ 不允许 Manifest 静态接收 ACTION_SCREEN_OFF）
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    Log.d(TAG, "Screen OFF detected")
+                    activityLog.addEntry("lock")
+                }
+                Intent.ACTION_USER_PRESENT -> {
+                    Log.d(TAG, "User PRESENT detected (unlock)")
+                    settings.resetActivity()
+                    activityLog.addEntry("unlock")
+                }
+            }
+        }
+    }
+
     companion object {
         private const val TAG = "MonitorService"
         const val CHECK_INTERVAL_MS = 60_000L
         const val ALERT_COOLDOWN_MS = 30 * 60_000L
         const val WAKELOCK_TIMEOUT_MS = 24 * 60 * 60 * 1000L
 
+        // 用于 MainActivity 检查服务是否运行
         fun isRunning(context: Context): Boolean {
             val prefs = context.getSharedPreferences("deadman_prefs", 0)
             return prefs.getBoolean(SettingsManager.KEY_MONITORING, false)
+        }
+
+        // 用于存储最后一次错误信息，供 UI 显示
+        private var lastError: String? = null
+        fun consumeLastError(): String? {
+            val err = lastError
+            lastError = null
+            return err
         }
     }
 
@@ -63,12 +91,27 @@ class MonitorService : Service() {
             startForeground(1, createStatusNotification())
         } catch (e: Exception) {
             Log.e(TAG, "startForeground failed", e)
+            lastError = "前台服务启动失败: ${e.message}\n${e.stackTraceToString()}"
+            activityLog.addEntry("error: ${e.message ?: "unknown"}")
             stopSelf()
             return START_NOT_STICKY
         }
 
         settings.isMonitoring = true
         settings.initIfNeeded()
+
+        // 动态注册屏幕锁屏/解锁广播接收器
+        try {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }
+            registerReceiver(screenReceiver, filter)
+            Log.d(TAG, "Screen receiver registered")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register screen receiver", e)
+            // 不致命，继续运行
+        }
 
         try {
             if (wakeLock?.isHeld != true) {
@@ -82,6 +125,7 @@ class MonitorService : Service() {
         handler.post(checkRunnable)
 
         activityLog.addEntry("monitor_start")
+        Log.d(TAG, "MonitorService started successfully")
         return START_STICKY
     }
 
@@ -102,6 +146,7 @@ class MonitorService : Service() {
         Log.d(TAG, "onDestroy")
         settings.isMonitoring = false
         handler.removeCallbacks(checkRunnable)
+        try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
         try {
             if (wakeLock?.isHeld == true) wakeLock?.release()
         } catch (_: Exception) {}

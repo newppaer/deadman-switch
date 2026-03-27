@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -62,6 +64,9 @@ fun MainScreen() {
     var crashLog by remember { mutableStateOf(CrashLogger.readLog(context)) }
     var showCrashLog by remember { mutableStateOf(CrashLogger.hasLog(context)) }
 
+    // 服务错误
+    var serviceError by remember { mutableStateOf<String?>(null) }
+
     // 通知权限请求
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -72,6 +77,15 @@ fun MainScreen() {
             activityLog.addEntry("monitor_start")
             logEntries = activityLog.getAll().take(20)
             Toast.makeText(context, "监控已启动", Toast.LENGTH_SHORT).show()
+            // 延迟检查是否启动成功
+            Handler(context.mainLooper).postDelayed({
+                val err = MonitorService.consumeLastError()
+                if (err != null) {
+                    serviceError = err
+                    isMonitoring = false
+                    logEntries = activityLog.getAll().take(20)
+                }
+            }, 1500)
         } else {
             Toast.makeText(context, "需要通知权限", Toast.LENGTH_LONG).show()
         }
@@ -95,6 +109,15 @@ fun MainScreen() {
             isMonitoring = true
             activityLog.addEntry("monitor_start")
             logEntries = activityLog.getAll().take(20)
+            // 延迟检查是否启动成功
+            Handler(context.mainLooper).postDelayed({
+                val err = MonitorService.consumeLastError()
+                if (err != null) {
+                    serviceError = err
+                    isMonitoring = false
+                    logEntries = activityLog.getAll().take(20)
+                }
+            }, 1500)
         }
     }
 
@@ -220,7 +243,7 @@ fun MainScreen() {
                     "monitor_start" -> "▶️ 开始监控"
                     "monitor_stop" -> "⏹ 停止监控"
                     "service_restart" -> "🔄 服务自动重启"
-                    else -> "📌 ${entry.type}"
+                    else -> if (entry.type.startsWith("error")) "❌ ${entry.type}" else "📌 ${entry.type}"
                 }
                 val sdf = remember { SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()) }
                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -273,6 +296,27 @@ fun MainScreen() {
             },
             confirmButton = { TextButton(onClick = { showCrashLog = false; CrashLogger.clearLog(context); crashLog = "" }) { Text("关闭并清除") } },
             dismissButton = { TextButton(onClick = { showCrashLog = false }) { Text("仅关闭") } }
+        )
+    }
+
+    // 服务启动错误弹窗
+    if (serviceError != null) {
+        val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+        AlertDialog(
+            onDismissRequest = { serviceError = null },
+            title = { Text("❌ 监控服务启动失败") },
+            text = {
+                Column {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = {
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(serviceError!!))
+                            Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                        }) { Text("📋 复制") }
+                    }
+                    SelectionContainer { Text(serviceError!!, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+                }
+            },
+            confirmButton = { TextButton(onClick = { serviceError = null }) { Text("关闭") } }
         )
     }
 }

@@ -37,13 +37,12 @@
             android:theme="@style/Theme.DeadManSwitch"
             android:parentActivityName=".MainActivity" />
 
-        <!-- 屏幕解锁/锁屏监听 -->
+        <!-- 屏幕解锁监听（锁屏通过 MonitorService 动态注册） -->
         <receiver
             android:name=".receiver.ScreenUnlockReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.USER_PRESENT" />
-                <action android:name="android.intent.action.SCREEN_OFF" />
             </intent-filter>
         </receiver>
 
