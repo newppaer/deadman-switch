@@ -22,14 +22,21 @@ class ActivityDetector(private val context: Context) {
         // 3. 检查传感器活动（未来扩展）
         // 4. 检查网络连接变化
         
-        val hasScreenUnlock = checkScreenUnlock()
-        val hasAppUsage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-            checkAppUsage()
-        } else {
-            false
+        return try {
+            val hasScreenUnlock = checkScreenUnlock()
+            val hasAppUsage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                checkAppUsage()
+            } else {
+                false
+            }
+            
+            val result = hasScreenUnlock || hasAppUsage
+            Logging.d("ActivityDetector", "detectActivity: screenUnlock=$hasScreenUnlock, appUsage=$hasAppUsage, result=$result")
+            result
+        } catch (e: Exception) {
+            Logging.e("ActivityDetector", "Error in detectActivity", e)
+            false // 发生异常时返回false，避免误触发警报
         }
-        
-        return hasScreenUnlock || hasAppUsage
     }
     
     private fun checkScreenUnlock(): Boolean {
@@ -49,17 +56,25 @@ class ActivityDetector(private val context: Context) {
             val endTime = System.currentTimeMillis()
             val startTime = endTime - 5 * 60 * 1000 // 最近5分钟
             
+            Logging.d("ActivityDetector", "checkAppUsage: querying usage stats from $startTime to $endTime")
+            
             val stats = usageStatsManager.queryUsageStats(
                 UsageStatsManager.INTERVAL_DAILY,
                 startTime,
                 endTime
             )
             
-            stats?.any { it.totalTimeInForeground > 0 } ?: false
+            val hasUsage = stats?.any { it.totalTimeInForeground > 0 } ?: false
+            val appCount = stats?.count { it.totalTimeInForeground > 0 } ?: 0
+            
+            Logging.d("ActivityDetector", "checkAppUsage: found $appCount apps with usage, result=$hasUsage")
+            hasUsage
         } catch (e: SecurityException) {
             // 没有 PACKAGE_USAGE_STATS 权限
+            Logging.w("ActivityDetector", "Missing PACKAGE_USAGE_STATS permission")
             false
         } catch (e: Exception) {
+            Logging.e("ActivityDetector", "Error checking app usage", e)
             false
         }
     }
@@ -68,39 +83,73 @@ class ActivityDetector(private val context: Context) {
      * 更新最后活动时间
      */
     fun updateLastActivity() {
-        prefs.edit().putLong("last_activity", System.currentTimeMillis()).apply()
+        try {
+            val now = System.currentTimeMillis()
+            prefs.edit().putLong("last_activity", now).apply()
+            Logging.d("ActivityDetector", "updateLastActivity: updated to $now")
+        } catch (e: Exception) {
+            Logging.e("ActivityDetector", "Failed to update last activity", e)
+        }
     }
     
     /**
      * 获取最后活动时间
      */
     fun getLastActivity(): Long {
-        return prefs.getLong("last_activity", 0L)
+        return try {
+            val lastActivity = prefs.getLong("last_activity", 0L)
+            Logging.d("ActivityDetector", "getLastActivity: $lastActivity")
+            lastActivity
+        } catch (e: Exception) {
+            Logging.e("ActivityDetector", "Failed to get last activity", e)
+            0L
+        }
     }
     
     /**
      * 获取无活动时长（毫秒）
      */
     fun getInactivityDuration(): Long {
-        val lastActivity = getLastActivity()
-        if (lastActivity == 0L) return 0L
-        return System.currentTimeMillis() - lastActivity
+        return try {
+            val lastActivity = getLastActivity()
+            if (lastActivity == 0L) {
+                Logging.d("ActivityDetector", "getInactivityDuration: no activity recorded")
+                return 0L
+            }
+            val duration = System.currentTimeMillis() - lastActivity
+            Logging.d("ActivityDetector", "getInactivityDuration: $duration ms")
+            duration
+        } catch (e: Exception) {
+            Logging.e("ActivityDetector", "Failed to calculate inactivity duration", e)
+            0L
+        }
     }
     
     /**
      * 格式化无活动时长
      */
     fun formatInactivityDuration(): String {
-        val duration = getInactivityDuration()
-        if (duration == 0L) return "无记录"
-        
-        val hours = duration / (1000 * 60 * 60)
-        val minutes = (duration % (1000 * 60 * 60)) / (1000 * 60)
-        
-        return if (hours > 0) {
-            "${hours}小时${minutes}分钟"
-        } else {
-            "${minutes}分钟"
+        return try {
+            val duration = getInactivityDuration()
+            if (duration == 0L) {
+                Logging.d("ActivityDetector", "formatInactivityDuration: no record")
+                return "无记录"
+            }
+            
+            val hours = duration / (1000 * 60 * 60)
+            val minutes = (duration % (1000 * 60 * 60)) / (1000 * 60)
+            
+            val result = if (hours > 0) {
+                "${hours}小时${minutes}分钟"
+            } else {
+                "${minutes}分钟"
+            }
+            
+            Logging.d("ActivityDetector", "formatInactivityDuration: $result")
+            result
+        } catch (e: Exception) {
+            Logging.e("ActivityDetector", "Failed to format inactivity duration", e)
+            "计算错误"
         }
     }
 }

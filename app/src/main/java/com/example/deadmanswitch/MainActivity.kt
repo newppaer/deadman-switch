@@ -22,17 +22,61 @@ import androidx.compose.ui.unit.sp
 import com.example.deadmanswitch.service.MonitorService
 import com.example.deadmanswitch.ui.theme.DeadManSwitchTheme
 import com.example.deadmanswitch.utils.ActivityDetector
+import com.example.deadmanswitch.utils.Logging
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Logging.logActivityLifecycle("MainActivity", "onCreate")
+        
+        // 检查是否有崩溃报告
+        checkCrashReport()
+        
         setContent {
             DeadManSwitchTheme {
                 MainScreen()
             }
         }
+    }
+    
+    private fun checkCrashReport() {
+        try {
+            val crashReport = Logging.getLastCrashReport(this)
+            if (crashReport != null) {
+                Logging.w("MainActivity", "Previous crash detected: ${crashReport.take(100)}...")
+                // 这里可以显示一个提示给用户
+                // 暂时只记录到日志，未来可以添加UI提示
+            }
+        } catch (e: Exception) {
+            Logging.e("MainActivity", "Failed to check crash report", e)
+        }
+    }
+    
+    override fun onStart() {
+        super.onStart()
+        Logging.logActivityLifecycle("MainActivity", "onStart")
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        Logging.logActivityLifecycle("MainActivity", "onResume")
+    }
+    
+    override fun onPause() {
+        super.onPause()
+        Logging.logActivityLifecycle("MainActivity", "onPause")
+    }
+    
+    override fun onStop() {
+        super.onStop()
+        Logging.logActivityLifecycle("MainActivity", "onStop")
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        Logging.logActivityLifecycle("MainActivity", "onDestroy")
     }
 }
 
@@ -126,12 +170,20 @@ fun MainScreen() {
                         prefs.edit().putFloat("threshold_hours", it).apply()
                     },
                     onToggleMonitoring = {
-                        if (isMonitoring) {
-                            context.stopService(Intent(context, MonitorService::class.java))
-                        } else {
-                            context.startForegroundService(Intent(context, MonitorService::class.java))
+                        try {
+                            if (isMonitoring) {
+                                Logging.logMonitoringEvent("Stopping monitoring service")
+                                context.stopService(Intent(context, MonitorService::class.java))
+                                Logging.d("MainActivity", "Service stop requested")
+                            } else {
+                                Logging.logMonitoringEvent("Starting monitoring service")
+                                context.startForegroundService(Intent(context, MonitorService::class.java))
+                                Logging.d("MainActivity", "Foreground service start requested")
+                            }
+                            isMonitoring = !isMonitoring
+                        } catch (e: Exception) {
+                            Logging.e("MainActivity", "Failed to toggle monitoring service", e)
                         }
-                        isMonitoring = !isMonitoring
                     },
                     onResetTimer = {
                         activityDetector.updateLastActivity()
