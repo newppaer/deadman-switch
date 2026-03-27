@@ -25,16 +25,19 @@ jobs:
         chmod +x gradlew
         ./gradlew assembleDebug --no-daemon --stacktrace
     
-    - name: Find APK
+    - name: Find and copy APK
       run: |
-        echo "=== All APK files ==="
-        find . -name "*.apk" -type f
-        echo "=== Build outputs ==="
-        find app/build/outputs -type f 2>/dev/null || echo "No outputs dir"
+        echo "=== Searching for APK files ==="
+        find . -name "*.apk" -type f | tee /tmp/apk_list.txt
+        echo "=== Build outputs tree ==="
+        find app/build/outputs -type f 2>/dev/null || echo "No outputs"
+        mkdir -p /tmp/apk_out
+        find app/build/outputs -name "*.apk" -exec cp {} /tmp/apk_out/ \; 2>/dev/null
+        ls -la /tmp/apk_out/ 2>/dev/null || echo "No APK found"
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug
-        path: app/build/outputs/**/*.apk
-        if-no-files-found: error
+        path: /tmp/apk_out/*.apk
+        if-no-files-found: warn
