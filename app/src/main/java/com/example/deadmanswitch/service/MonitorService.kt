@@ -212,10 +212,10 @@ class MonitorService : Service() {
         // 推送消息内容
         val alertMsg = "⚠️ DeadManSwitch 警报\n已超过 ${hours} 小时未检测到活动，可能遇到紧急情况。"
 
-        // 1. 短信推送（如果开启）
+        // 1. 短信推送（如果开启且有联系人）
         try {
             val contactManager = ContactManager(this)
-            if (contactManager.isSmsEnabled()) {
+            if (contactManager.isSmsEnabled() && contactManager.getAll().any { it.enabled }) {
                 contactManager.sendAlertSms(hours)
                 Log.d(TAG, "SMS sent to contacts")
             }
@@ -223,25 +223,25 @@ class MonitorService : Service() {
             Log.e(TAG, "SMS push failed", e)
         }
 
-        // 2. 企业微信 Webhook 推送
+        // 2. 企业微信 Webhook 推送（开关开启 + URL 已配置）
         try {
-            val webhookUrl = settings.wecomWebhookUrl
-            if (webhookUrl.isNotBlank()) {
-                PushManager.sendWeChatWork(webhookUrl, alertMsg)
+            if (settings.wecomEnabled && settings.wecomWebhookUrl.isNotBlank()) {
+                val msg = settings.wecomMessage.ifBlank { alertMsg }
+                PushManager.sendWeChatWork(settings.wecomWebhookUrl, msg)
             }
         } catch (e: Exception) {
             Log.e(TAG, "WeChatWork push failed", e)
         }
 
-        // 3. OpenClaw API 推送
+        // 3. OpenClaw API 推送（开关开启 + URL 已配置）
         try {
-            val apiUrl = settings.openclawApiUrl
-            if (apiUrl.isNotBlank()) {
+            if (settings.openclawEnabled && settings.openclawApiUrl.isNotBlank()) {
+                val msg = settings.openclawMessage.ifBlank { alertMsg }
                 PushManager.sendHttpPost(
-                    apiUrl = apiUrl,
+                    apiUrl = settings.openclawApiUrl,
                     token = settings.openclawToken,
                     title = "DeadManSwitch 警报",
-                    content = alertMsg
+                    content = msg
                 )
             }
         } catch (e: Exception) {

@@ -14,8 +14,12 @@ class SettingsManager(context: Context) {
         const val KEY_LAST_ALERT_TIME = "last_alert_time"
         const val KEY_DARK_MODE = "dark_mode"
         const val KEY_WECOM_WEBHOOK = "wecom_webhook_url"
+        const val KEY_WECOM_ENABLED = "wecom_enabled"
+        const val KEY_WECOM_MESSAGE = "wecom_message"
         const val KEY_OPENCLAW_API_URL = "openclaw_api_url"
         const val KEY_OPENCLAW_TOKEN = "openclaw_token"
+        const val KEY_OPENCLAW_ENABLED = "openclaw_enabled"
+        const val KEY_OPENCLAW_MESSAGE = "openclaw_message"
         const val DEFAULT_THRESHOLD = 12f
     }
 
@@ -48,6 +52,16 @@ class SettingsManager(context: Context) {
         get() = prefs.getString(KEY_WECOM_WEBHOOK, "") ?: ""
         set(value) = prefs.edit().putString(KEY_WECOM_WEBHOOK, value).apply()
 
+    // 企业微信推送开关
+    var wecomEnabled: Boolean
+        get() = prefs.getBoolean(KEY_WECOM_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_WECOM_ENABLED, value).apply()
+
+    // 企业微信自定义消息
+    var wecomMessage: String
+        get() = prefs.getString(KEY_WECOM_MESSAGE, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_WECOM_MESSAGE, value).apply()
+
     // OpenClaw API URL
     var openclawApiUrl: String
         get() = prefs.getString(KEY_OPENCLAW_API_URL, "") ?: ""
@@ -57,6 +71,16 @@ class SettingsManager(context: Context) {
     var openclawToken: String
         get() = prefs.getString(KEY_OPENCLAW_TOKEN, "") ?: ""
         set(value) = prefs.edit().putString(KEY_OPENCLAW_TOKEN, value).apply()
+
+    // OpenClaw 推送开关
+    var openclawEnabled: Boolean
+        get() = prefs.getBoolean(KEY_OPENCLAW_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_OPENCLAW_ENABLED, value).apply()
+
+    // OpenClaw 自定义消息
+    var openclawMessage: String
+        get() = prefs.getString(KEY_OPENCLAW_MESSAGE, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_OPENCLAW_MESSAGE, value).apply()
 
     val thresholdMs: Long
         get() = (thresholdHours * 60 * 60 * 1000).toLong()

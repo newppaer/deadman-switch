@@ -77,8 +77,17 @@ class ContactManager(context: Context) {
         if (contacts.isEmpty()) return
 
         val message = getSmsMessage() + "\n（已 ${hours} 小时无活动）"
-        val smsManager = SmsManager.getDefault()
+        sendSmsToContacts(message, contacts)
+    }
 
+    fun sendTestSms() {
+        val contacts = getAll().filter { it.enabled }
+        if (contacts.isEmpty()) return
+        sendSmsToContacts("🧪 DeadManSwitch 测试短信 - 推送正常 ✅", contacts)
+    }
+
+    private fun sendSmsToContacts(message: String, contacts: List<EmergencyContact>) {
+        val smsManager = SmsManager.getDefault()
         for (contact in contacts) {
             try {
                 val parts = smsManager.divideMessage(message)
