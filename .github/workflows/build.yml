@@ -17,17 +17,20 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
     
-    - name: Build APK
-      run: |
-        chmod +x gradlew
-        java -version
-        ls -la gradlew
-        ls -la gradle/wrapper/
-        bash -x gradlew assembleDebug --no-daemon 2>&1 | head -100
-        
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+      with:
+        cache-read-only: false
+    
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+    
+    - name: Build with Gradle
+      run: ./gradlew assembleDebug --no-daemon
+    
     - name: Upload APK
       uses: actions/upload-artifact@v4
-      with: 
+      with:
         name: app-debug
         path: app/build/outputs/apk/debug/*.apk
-        if-no-files-found: warn
+        if-no-files-found: error
