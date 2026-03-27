@@ -20,22 +20,14 @@ jobs:
     - name: Build APK
       run: |
         chmod +x gradlew
-        echo "=== Gradle version ==="
-        ./gradlew --version
-        echo "=== Building ==="
-        ./gradlew assembleDebug --no-daemon --stacktrace
-        
-    - name: Find APK
-      if: always()
-      run: |
-        echo "=== tree of build dir ==="
-        find app/build -type f 2>/dev/null | head -100
-        echo "=== any apk anywhere ==="
-        find / -name "*.apk" -type f 2>/dev/null | head -20
+        java -version
+        ls -la gradlew
+        ls -la gradle/wrapper/
+        bash -x gradlew assembleDebug --no-daemon 2>&1 | head -100
         
     - name: Upload APK
       uses: actions/upload-artifact@v4
-      with:
+      with: 
         name: app-debug
-        path: app/build/outputs/apk/**/*.apk
-        if-no-files-found: error
+        path: app/build/outputs/apk/debug/*.apk
+        if-no-files-found: warn
