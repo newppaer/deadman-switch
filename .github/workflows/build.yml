@@ -20,21 +20,11 @@ jobs:
     - name: Build APK
       run: |
         chmod +x gradlew
-        ./gradlew assembleDebug --no-daemon --stacktrace --info 2>&1 | tee /tmp/build.log
-    
-    - name: Debug output
-      if: always()
-      run: |
-        echo "=== Gradle build output dir ==="
-        find app/build -type d 2>/dev/null | head -30
-        echo "=== All APKs ==="
-        find . -name "*.apk" 2>/dev/null
-        echo "=== Build log tail ==="
-        tail -50 /tmp/build.log 2>/dev/null
+        ./gradlew assembleDebug --no-daemon
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug
-        path: app/build/outputs/**/*.apk
+        path: app/build/outputs/apk/debug/*.apk
         if-no-files-found: error
