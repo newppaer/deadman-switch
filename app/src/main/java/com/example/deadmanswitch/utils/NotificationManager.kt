@@ -6,6 +6,8 @@ import android.app.NotificationManager as AndroidNotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.example.deadmanswitch.MainActivity
@@ -43,7 +45,9 @@ class AppNotificationManager(private val context: Context) {
                 description = "安全警报通知"
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 500, 200, 500, 200, 500)
-                setSound(android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI, null)
+                // 使用系统默认警报音
+                val alarmSound: Uri? = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                setSound(alarmSound, null)
             }
             
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) 
