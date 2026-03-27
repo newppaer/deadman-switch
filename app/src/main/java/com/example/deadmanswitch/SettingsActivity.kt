@@ -37,8 +37,17 @@ class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            DeadManSwitchTheme {
-                SettingsScreen(onBack = { finish() })
+            val settings = remember { SettingsManager(this) }
+            var darkMode by remember { mutableIntStateOf(settings.darkMode) }
+            // darkMode 变化时实时重建主题
+            key(darkMode) {
+                DeadManSwitchTheme(darkMode = darkMode) {
+                    SettingsScreen(
+                        onBack = { finish() },
+                        darkMode = darkMode,
+                        onDarkModeChange = { darkMode = it }
+                    )
+                }
             }
         }
     }
@@ -46,14 +55,18 @@ class SettingsActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    darkMode: Int = 0,
+    onDarkModeChange: (Int) -> Unit = {}
+) {
     val context = LocalContext.current
     val settings = remember { SettingsManager(context) }
     val contactManager = remember { ContactManager(context) }
 
     // 常规
     var autoStart by remember { mutableStateOf(settings.autoStart) }
-    var darkMode by remember { mutableIntStateOf(settings.darkMode) }
+    // darkMode 从参数传入，变更后回调
 
     // 短信
     var smsEnabled by remember { mutableStateOf(contactManager.isSmsEnabled()) }
@@ -138,7 +151,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Text("深色模式")
                     val options = listOf("跟随系统", "亮色", "暗色")
                     SegmentedButton(selectedIndex = darkMode, options = options,
-                        onSelect = { darkMode = it; settings.darkMode = it })
+                        onSelect = { onDarkModeChange(it); settings.darkMode = it })
                 }
             }
 

@@ -2,7 +2,6 @@ package com.example.deadmanswitch.ui.theme
 
 import android.app.Activity
 import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
@@ -54,12 +53,25 @@ private val DarkColorScheme = darkColorScheme(
     onSurface = Color(0xFFE1E3DF),
 )
 
+/**
+ * darkMode: 0=跟随系统, 1=亮色, 2=暗色
+ */
 @Composable
 fun DeadManSwitchTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkMode: Int = 0,
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    // 读取系统暗色状态
+    val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+
+    // 根据设置决定是否暗色
+    val darkTheme = when (darkMode) {
+        1 -> false   // 强制亮色
+        2 -> true    // 强制暗色
+        else -> systemDark  // 跟随系统
+    }
+
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
@@ -78,9 +90,7 @@ fun DeadManSwitchTheme(
                 val window = activity.window
                 window.statusBarColor = colorScheme.primary.toArgb()
                 WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
-            } catch (_: Exception) {
-                // 忽略窗口操作异常
-            }
+            } catch (_: Exception) {}
         }
     }
 

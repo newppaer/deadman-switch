@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.example.deadmanswitch.data.ActivityLogManager
+import com.example.deadmanswitch.data.SettingsManager
 import com.example.deadmanswitch.ui.theme.DeadManSwitchTheme
 import java.text.SimpleDateFormat
 import java.util.*
@@ -29,7 +30,8 @@ class LogActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            DeadManSwitchTheme {
+            val settings = remember { SettingsManager(this) }
+            DeadManSwitchTheme(darkMode = settings.darkMode) {
                 LogScreen(onBack = { finish() })
             }
         }
