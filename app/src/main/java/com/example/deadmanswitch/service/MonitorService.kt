@@ -12,15 +12,26 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.example.deadmanswitch.MainActivity
 import com.example.deadmanswitch.R
+import com.example.deadmanswitch.data.ActivityLogManager
+import com.example.deadmanswitch.data.ContactManager
+import com.example.deadmanswitch.data.SettingsManager
 
 class MonitorService : Service() {
     private val handler = Handler(Looper.getMainLooper())
-    private lateinit var prefs: android.content.SharedPreferences
+    private lateinit var settings: SettingsManager
+    private lateinit var activityLog: ActivityLogManager
+    private lateinit var contactManager: ContactManager
     private lateinit var wakeLock: PowerManager.WakeLock
 
     companion object {
-        var isRunning = false
-        const val CHECK_INTERVAL_MS = 60000L // 每分钟检查一次
+        const val CHECK_INTERVAL_MS = 60_000L
+        const val ALERT_COOLDOWN_MS = 30 * 60_000L // 30分钟内不重复报警
+        const val WAKELOCK_TIMEOUT_MS = 24 * 60 * 60 * 1000L // 24小时
+
+        fun isRunning(context: Context): Boolean {
+            val prefs = context.getSharedPreferences("deadman_prefs", 0)
+            return prefs.getBoolean(SettingsManager.KEY_MONITORING, false)
+        }
     }
 
     private val checkRunnable = object : Runnable {
@@ -32,8 +43,10 @@ class MonitorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        prefs = getSharedPreferences("deadman_prefs", 0)
-        
+        settings = SettingsManager(this)
+        activityLog = ActivityLogManager(this)
+        contactManager = ContactManager(this)
+
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
@@ -42,23 +55,32 @@ class MonitorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(1, createNotification())
-        isRunning = true
-        wakeLock.acquire(10*60*1000L) // 10分钟超时
+        startForeground(1, createStatusNotification())
+        settings.isMonitoring = true
+        settings.initIfNeeded()
+
+        if (!wakeLock.isHeld) {
+            wakeLock.acquire(WAKELOCK_TIMEOUT_MS)
+        }
+
+        handler.removeCallbacks(checkRunnable)
         handler.post(checkRunnable)
+
+        activityLog.addEntry("monitor_start")
         return START_STICKY
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        isRunning = false
+        settings.isMonitoring = false
         handler.removeCallbacks(checkRunnable)
         if (wakeLock.isHeld) wakeLock.release()
+        activityLog.addEntry("monitor_stop")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun createNotification(): Notification {
+    private fun createStatusNotification(): Notification {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -67,8 +89,8 @@ class MonitorService : Service() {
         )
 
         return NotificationCompat.Builder(this, "monitor_channel")
-            .setContentTitle("安全监控运行中")
-            .setContentText("正在监听您的活动状态")
+            .setContentTitle("🛡️ DeadManSwitch 运行中")
+            .setContentText("阈值: ${settings.thresholdHours.toInt()}小时 | 点击查看状态")
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
@@ -76,26 +98,56 @@ class MonitorService : Service() {
     }
 
     private fun checkActivity() {
-        val lastActivity = prefs.getLong("last_activity", 0L)
-        if (lastActivity == 0L) {
-            // 首次运行，记录当前时间
-            prefs.edit().putLong("last_activity", System.currentTimeMillis()).apply()
-            return
-        }
+        val elapsedMs = System.currentTimeMillis() - settings.lastActivityTime
+        val thresholdMs = settings.thresholdMs
 
-        val thresholdHours = prefs.getFloat("threshold_hours", 12f)
-        val thresholdMs = (thresholdHours * 60 * 60 * 1000).toLong()
-        val elapsedMs = System.currentTimeMillis() - lastActivity
+        // 更新前台通知，显示剩余时间
+        updateStatusNotification(elapsedMs, thresholdMs)
 
         if (elapsedMs >= thresholdMs) {
             triggerAlert(elapsedMs)
         }
     }
 
+    private fun updateStatusNotification(elapsedMs: Long, thresholdMs: Long) {
+        val remainingMs = (thresholdMs - elapsedMs).coerceAtLeast(0)
+        val hours = remainingMs / (1000 * 60 * 60)
+        val minutes = (remainingMs % (1000 * 60 * 60)) / (1000 * 60)
+
+        val text = if (remainingMs > 0) {
+            "剩余 ${hours}时${minutes}分 后触发警报"
+        } else {
+            "⚠️ 已超过阈值！"
+        }
+
+        val notification = NotificationCompat.Builder(this, "monitor_channel")
+            .setContentTitle("🛡️ DeadManSwitch 运行中")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setOngoing(true)
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    this, 0,
+                    Intent(this, MainActivity::class.java),
+                    PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+            .build()
+
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        manager.notify(1, notification)
+    }
+
     private fun triggerAlert(elapsedMs: Long) {
+        // 去重：30分钟内不重复报警
+        val now = System.currentTimeMillis()
+        if (now - settings.lastAlertTime < ALERT_COOLDOWN_MS) return
+        settings.lastAlertTime = now
+
         val hours = elapsedMs / (1000 * 60 * 60)
-        
-        // 发出通知
+        activityLog.addEntry("alert")
+
+        // 发通知
         val alertIntent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this, 1, alertIntent, PendingIntent.FLAG_IMMUTABLE
@@ -103,7 +155,7 @@ class MonitorService : Service() {
 
         val notification = NotificationCompat.Builder(this, "alert_channel")
             .setContentTitle("⚠️ 安全警报")
-            .setContentText("已超过 ${hours} 小时未检测到活动")
+            .setContentText("已超过 ${hours} 小时未检测到活动！")
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
@@ -112,13 +164,10 @@ class MonitorService : Service() {
             .setAutoCancel(false)
             .build()
 
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) 
-            as android.app.NotificationManager
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
         manager.notify(999, notification)
 
-        // TODO: 这里可以添加更多报警方式
-        // - 发送短信给紧急联系人
-        // - 调用 API 通知 OpenClaw
-        // - 播放警报音
+        // 发短信给紧急联系人
+        contactManager.sendAlertSms(hours)
     }
 }
