@@ -4,6 +4,7 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.Build.VERSION_CODES
 import androidx.annotation.RequiresApi
 
 class ActivityDetector(private val context: Context) {
