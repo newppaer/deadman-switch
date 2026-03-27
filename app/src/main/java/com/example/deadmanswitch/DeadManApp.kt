@@ -9,6 +9,7 @@ class DeadManApp : Application() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
+        CrashLogger.install(this)
     }
 
     private fun createNotificationChannels() {

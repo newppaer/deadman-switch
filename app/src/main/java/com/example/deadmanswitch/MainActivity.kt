@@ -74,6 +74,10 @@ fun MainScreen() {
         }
     }
 
+    // 检查崩溃日志
+    var crashLog by remember { mutableStateOf(CrashLogger.readLog(context)) }
+    var showCrashLog by remember { mutableStateOf(CrashLogger.hasLog(context)) }
+
     LaunchedEffect(isMonitoring) {
         while (isMonitoring) {
             remainingMs = settings.remainingMs
@@ -209,6 +213,37 @@ fun MainScreen() {
             },
             dismissButton = {
                 TextButton(onClick = { showStopDialog = false }) { Text("取消") }
+            }
+        )
+    // 崩溃日志弹窗
+    if (showCrashLog && crashLog.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = {
+                showCrashLog = false
+                CrashLogger.clearLog(context)
+                crashLog = ""
+            },
+            title = { Text("⚠️ 上次崩溃报告") },
+            text = {
+                LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                    item {
+                        Text(
+                            crashLog,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCrashLog = false
+                    CrashLogger.clearLog(context)
+                    crashLog = ""
+                }) { Text("关闭并清除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCrashLog = false }) { Text("仅关闭") }
             }
         )
     }
