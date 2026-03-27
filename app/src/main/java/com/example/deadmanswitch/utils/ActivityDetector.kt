@@ -22,7 +22,11 @@ class ActivityDetector(private val context: Context) {
         // 4. 检查网络连接变化
         
         val hasScreenUnlock = checkScreenUnlock()
-        val hasAppUsage = checkAppUsage()
+        val hasAppUsage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            checkAppUsage()
+        } else {
+            false
+        }
         
         return hasScreenUnlock || hasAppUsage
     }
