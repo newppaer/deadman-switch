@@ -29,14 +29,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.deadmanswitch.data.ActivityLogManager
 import com.example.deadmanswitch.data.SettingsManager
 import com.example.deadmanswitch.service.MonitorService
 import com.example.deadmanswitch.ui.theme.DeadManSwitchTheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,11 +75,15 @@ fun MainScreen() {
     LaunchedEffect(Unit) { refreshCounts() }
 
     // 页面回到前台时刷新数据（从设置页/历史页返回）
-    val lifecycleOwner = LocalLifecycleOwner.current
-    LaunchedEffect(lifecycleOwner) {
-        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            refreshCounts()
+    DisposableEffect(Unit) {
+        val activity = context as? androidx.activity.ComponentActivity
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshCounts()
+            }
         }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose { activity?.lifecycle?.removeObserver(observer) }
     }
 
     // 崩溃日志
