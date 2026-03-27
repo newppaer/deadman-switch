@@ -17,27 +17,24 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
     
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v3
-    
     - name: Build APK
       run: |
         chmod +x gradlew
-        ./gradlew assembleDebug --no-daemon --stacktrace
+        ./gradlew assembleDebug --no-daemon --stacktrace --info 2>&1 | tee /tmp/build.log
     
-    - name: Find and copy APK
+    - name: Debug output
+      if: always()
       run: |
-        echo "=== Searching for APK files ==="
-        find . -name "*.apk" -type f | tee /tmp/apk_list.txt
-        echo "=== Build outputs tree ==="
-        find app/build/outputs -type f 2>/dev/null || echo "No outputs"
-        mkdir -p /tmp/apk_out
-        find app/build/outputs -name "*.apk" -exec cp {} /tmp/apk_out/ \; 2>/dev/null
-        ls -la /tmp/apk_out/ 2>/dev/null || echo "No APK found"
+        echo "=== Gradle build output dir ==="
+        find app/build -type d 2>/dev/null | head -30
+        echo "=== All APKs ==="
+        find . -name "*.apk" 2>/dev/null
+        echo "=== Build log tail ==="
+        tail -50 /tmp/build.log 2>/dev/null
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug
-        path: /tmp/apk_out/*.apk
-        if-no-files-found: warn
+        path: app/build/outputs/**/*.apk
+        if-no-files-found: error
