@@ -37,7 +37,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
     implementation("androidx.navigation:navigation-compose:2.7.7")
     
     // Room database (暂时注释，等基础功能稳定后再添加)
