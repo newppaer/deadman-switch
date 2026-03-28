@@ -1,16 +1,57 @@
 package com.example.deadmanswitch.service
 
+import android.app.AppOpsManager
 import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.os.Process
 import android.util.Log
 import com.example.deadmanswitch.data.ActivityLogManager
 import com.example.deadmanswitch.data.SettingsManager
 
 /**
  * 监控调度器
- * 替代前台服务，使用 WorkManager 管理定时检查
+ * 根据权限自动选择方案：
+ * - 有 UsageStats 权限 → WorkManager (方案B)
+ * - 无权限 → 轻量 ScreenEventService (方案A)
  */
 object MonitorScheduler {
     private const val TAG = "MonitorScheduler"
+
+    /**
+     * 检查 UsageStats 权限
+     */
+    fun hasUsageStatsPermission(context: Context): Boolean {
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                context.packageName
+            )
+        } else {
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                context.packageName
+            )
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    /**
+     * 初始化 UsageStatsManager（确保 App 出现在权限列表中）
+     */
+    fun initUsageStats(context: Context) {
+        try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
+            usm?.queryUsageStats(
+                android.app.usage.UsageStatsManager.INTERVAL_DAILY,
+                System.currentTimeMillis() - 1000,
+                System.currentTimeMillis()
+            )
+        } catch (_: Exception) {}
+    }
 
     /**
      * 启动监控
@@ -20,9 +61,18 @@ object MonitorScheduler {
         settings.isMonitoring = true
         settings.initIfNeeded()
 
-        MonitorWorker.schedule(context)
+        if (hasUsageStatsPermission(context)) {
+            // 方案B: WorkManager + UsageStatsManager
+            MonitorWorker.schedule(context)
+            Log.d(TAG, "Using WorkManager (UsageStats granted)")
+        } else {
+            // 方案A: 轻量 ScreenEventService
+            val intent = Intent(context, ScreenEventService::class.java)
+            context.startService(intent)
+            Log.d(TAG, "Using ScreenEventService (UsageStats not granted)")
+        }
+
         ActivityLogManager(context).addEntry("monitor_start")
-        Log.d(TAG, "Monitoring started via WorkManager")
     }
 
     /**
@@ -32,7 +82,10 @@ object MonitorScheduler {
         val settings = SettingsManager(context)
         settings.isMonitoring = false
 
+        // 停止两种方案
         MonitorWorker.cancel(context)
+        context.stopService(Intent(context, ScreenEventService::class.java))
+
         ActivityLogManager(context).addEntry("monitor_stop")
         Log.d(TAG, "Monitoring stopped")
     }
@@ -42,5 +95,12 @@ object MonitorScheduler {
      */
     fun isRunning(context: Context): Boolean {
         return SettingsManager(context).isMonitoring
+    }
+
+    /**
+     * 获取当前使用的方案
+     */
+    fun getCurrentMode(context: Context): String {
+        return if (hasUsageStatsPermission(context)) "WorkManager" else "Service"
     }
 }

@@ -1,12 +1,10 @@
 package com.example.deadmanswitch
 
 import android.Manifest
-import android.app.AppOpsManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Process
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -42,7 +40,6 @@ class MainActivity : ComponentActivity() {
             val settings = remember { SettingsManager(this) }
             var darkMode by remember { mutableIntStateOf(settings.darkMode) }
 
-            // 从设置页返回时刷新 darkMode
             DisposableEffect(Unit) {
                 val observer = LifecycleEventObserver { _, event ->
                     if (event == Lifecycle.Event.ON_RESUME) {
@@ -63,48 +60,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 双重保险：每次回到前台都重置活动时间
         val settings = SettingsManager(this)
         if (MonitorScheduler.isRunning(this)) {
             settings.resetActivity()
         }
     }
-}
-
-/**
- * 检查 UsageStats 权限
- */
-fun hasUsageStatsPermission(context: android.content.Context): Boolean {
-    val appOps = context.getSystemService(android.content.Context.APP_OPS_SERVICE) as AppOpsManager
-    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        appOps.unsafeCheckOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            Process.myUid(),
-            context.packageName
-        )
-    } else {
-        appOps.checkOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            Process.myUid(),
-            context.packageName
-        )
-    }
-    return mode == AppOpsManager.MODE_ALLOWED
-}
-
-/**
- * 初始化 UsageStatsManager（确保 App 出现在权限列表中）
- */
-fun initUsageStats(context: android.content.Context) {
-    try {
-        val usm = context.getSystemService(android.content.Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
-        // 查询一次即可让系统注册此 App
-        usm?.queryUsageStats(
-            android.app.usage.UsageStatsManager.INTERVAL_DAILY,
-            System.currentTimeMillis() - 1000,
-            System.currentTimeMillis()
-        )
-    } catch (_: Exception) {}
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -120,8 +80,9 @@ fun MainScreen() {
     var remainingMs by remember { mutableLongStateOf(settings.remainingMs) }
     var remainingPercent by remember { mutableFloatStateOf(settings.remainingPercent) }
 
-    // UsageStats 权限状态
-    var hasUsagePermission by remember { mutableStateOf(hasUsageStatsPermission(context)) }
+    // 权限和模式状态
+    var hasUsagePermission by remember { mutableStateOf(MonitorScheduler.hasUsageStatsPermission(context)) }
+    var currentMode by remember { mutableStateOf(MonitorScheduler.getCurrentMode(context)) }
 
     // 解锁/锁屏统计（今日）
     var unlockCount by remember { mutableIntStateOf(0) }
@@ -131,12 +92,12 @@ fun MainScreen() {
         val today = activityLog.getTodayEntries()
         unlockCount = today.count { it.type == "unlock" }
         lockCount = today.count { it.type == "lock" }
-        hasUsagePermission = hasUsageStatsPermission(context)
+        hasUsagePermission = MonitorScheduler.hasUsageStatsPermission(context)
+        currentMode = MonitorScheduler.getCurrentMode(context)
     }
 
     LaunchedEffect(Unit) { refreshCounts() }
 
-    // 页面回到前台时刷新数据
     DisposableEffect(Unit) {
         val activity = context as? androidx.activity.ComponentActivity
         val observer = LifecycleEventObserver { _, event ->
@@ -182,13 +143,6 @@ fun MainScreen() {
     }
 
     fun startMonitoring() {
-        // 检查 UsageStats 权限
-        if (!hasUsageStatsPermission(context)) {
-            showPermissionDialog = true
-            pendingPermission = "使用情况访问"
-            return
-        }
-
         // 检查通知权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
@@ -196,10 +150,13 @@ fun MainScreen() {
         ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
+            // 直接启动，MonitorScheduler 会自动选择方案
             MonitorScheduler.start(context)
             isMonitoring = true
             refreshCounts()
-            Toast.makeText(context, "监控已启动（WorkManager 低功耗模式）", Toast.LENGTH_SHORT).show()
+
+            val modeText = if (hasUsagePermission) "低功耗模式 (WorkManager)" else "兼容模式 (Service)"
+            Toast.makeText(context, "监控已启动 · $modeText", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -228,24 +185,23 @@ fun MainScreen() {
         ) {
             item { Spacer(modifier = Modifier.height(8.dp)) }
 
-            // 权限提示卡片
-            if (!hasUsagePermission) {
+            // 权限提示卡片（可选升级提示）
+            if (!hasUsagePermission && isMonitoring) {
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text("⚠️ 需要权限", style = MaterialTheme.typography.titleMedium)
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("💡 省电提示", style = MaterialTheme.typography.titleMedium)
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "监控锁屏/解锁事件需要「使用情况访问」权限。请在设置中手动开启。",
+                                "当前使用兼容模式。开启「使用情况访问」权限可切换到更低功耗的 WorkManager 模式。",
                                 style = MaterialTheme.typography.bodySmall
                             )
                             Spacer(modifier = Modifier.height(8.dp))
-                            Button(onClick = {
-                                // 先初始化，确保 App 出现在列表中
-                                initUsageStats(context)
+                            OutlinedButton(onClick = {
+                                MonitorScheduler.initUsageStats(context)
                                 val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
                                 context.startActivity(intent)
                             }) {
@@ -277,6 +233,14 @@ fun MainScreen() {
                             text = if (isMonitoring) "🛡️ 监控中" else "🔴 已停止",
                             style = MaterialTheme.typography.headlineMedium
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        if (isMonitoring) {
+                            Text(
+                                text = if (hasUsagePermission) "WorkManager 低功耗" else "Service 兼容模式",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         Spacer(modifier = Modifier.height(12.dp))
                         if (isMonitoring) {
                             val h = remainingMs / (1000 * 60 * 60)
@@ -461,7 +425,7 @@ fun MainScreen() {
             text = {
                 Text(
                     if (pendingPermission == "使用情况访问")
-                        "锁屏/解锁检测需要「使用情况访问」权限。\n\n请在设置中找到 DeadManSwitch，开启权限。"
+                        "开启此权限可使用更低功耗的 WorkManager 模式。\n\n不开启也可以使用，会降级为 Service 兼容模式。"
                     else
                         "请在系统设置中手动开启${pendingPermission}权限，否则此功能无法正常使用。"
                 )
@@ -470,8 +434,7 @@ fun MainScreen() {
                 TextButton(onClick = {
                     showPermissionDialog = false
                     val intent = if (pendingPermission == "使用情况访问") {
-                        // 先初始化，确保 App 出现在列表中
-                        initUsageStats(context)
+                        MonitorScheduler.initUsageStats(context)
                         Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
                     } else {
                         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {

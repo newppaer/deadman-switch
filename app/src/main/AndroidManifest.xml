@@ -65,5 +65,11 @@
 
         <!-- 前台服务已移除，改用 WorkManager 调度 -->
 
+        <!-- 轻量屏幕事件监听服务（UsageStats 未授权时的备用方案） -->
+        <service
+            android:name=".service.ScreenEventService"
+            android:enabled="true"
+            android:exported="false" />
+
     </application>
 </manifest>
