@@ -92,6 +92,21 @@ fun hasUsageStatsPermission(context: android.content.Context): Boolean {
     return mode == AppOpsManager.MODE_ALLOWED
 }
 
+/**
+ * 初始化 UsageStatsManager（确保 App 出现在权限列表中）
+ */
+fun initUsageStats(context: android.content.Context) {
+    try {
+        val usm = context.getSystemService(android.content.Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
+        // 查询一次即可让系统注册此 App
+        usm?.queryUsageStats(
+            android.app.usage.UsageStatsManager.INTERVAL_DAILY,
+            System.currentTimeMillis() - 1000,
+            System.currentTimeMillis()
+        )
+    } catch (_: Exception) {}
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen() {
@@ -229,6 +244,8 @@ fun MainScreen() {
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Button(onClick = {
+                                // 先初始化，确保 App 出现在列表中
+                                initUsageStats(context)
                                 val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
                                 context.startActivity(intent)
                             }) {
@@ -453,6 +470,8 @@ fun MainScreen() {
                 TextButton(onClick = {
                     showPermissionDialog = false
                     val intent = if (pendingPermission == "使用情况访问") {
+                        // 先初始化，确保 App 出现在列表中
+                        initUsageStats(context)
                         Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
                     } else {
                         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
