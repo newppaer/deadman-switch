@@ -1,82 +1,51 @@
 package com.example.deadmanswitch
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.Bundle
+import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.example.deadmanswitch.data.ActivityLogManager
+import com.example.deadmanswitch.data.SettingsManager
 import com.example.deadmanswitch.service.MonitorService
 import com.example.deadmanswitch.ui.theme.DeadManSwitchTheme
-import com.example.deadmanswitch.utils.ActivityDetector
-import com.example.deadmanswitch.utils.Logging
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Logging.logActivityLifecycle("MainActivity", "onCreate")
-        
-        // 检查是否有崩溃报告
-        checkCrashReport()
-        
         setContent {
-            DeadManSwitchTheme {
+            val settings = remember { SettingsManager(this) }
+            val darkMode by remember { mutableIntStateOf(settings.darkMode) }
+            DeadManSwitchTheme(darkMode = darkMode) {
                 MainScreen()
             }
         }
-    }
-    
-    private fun checkCrashReport() {
-        try {
-            val crashReport = Logging.getLastCrashReport(this)
-            if (crashReport != null) {
-                Logging.w("MainActivity", "Previous crash detected: ${crashReport.take(100)}...")
-                // 这里可以显示一个提示给用户
-                // 暂时只记录到日志，未来可以添加UI提示
-            }
-        } catch (e: Exception) {
-            Logging.e("MainActivity", "Failed to check crash report", e)
-        }
-    }
-    
-    override fun onStart() {
-        super.onStart()
-        Logging.logActivityLifecycle("MainActivity", "onStart")
-    }
-    
-    override fun onResume() {
-        super.onResume()
-        Logging.logActivityLifecycle("MainActivity", "onResume")
-    }
-    
-    override fun onPause() {
-        super.onPause()
-        Logging.logActivityLifecycle("MainActivity", "onPause")
-    }
-    
-    override fun onStop() {
-        super.onStop()
-        Logging.logActivityLifecycle("MainActivity", "onStop")
-    }
-    
-    override fun onDestroy() {
-        super.onDestroy()
-        Logging.logActivityLifecycle("MainActivity", "onDestroy")
     }
 }
 
@@ -84,606 +53,387 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen() {
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("deadman_prefs", 0) }
-    val activityDetector = remember { ActivityDetector(context) }
-    val coroutineScope = rememberCoroutineScope()
-    
-    var thresholdHours by remember { 
-        mutableFloatStateOf(prefs.getFloat("threshold_hours", 12f)) 
+    val settings = remember { SettingsManager(context) }
+    val activityLog = remember { ActivityLogManager(context) }
+
+    var isMonitoring by remember { mutableStateOf(MonitorService.isRunning(context)) }
+    var thresholdHours by remember { mutableFloatStateOf(settings.thresholdHours) }
+    var showStopDialog by remember { mutableStateOf(false) }
+    var remainingMs by remember { mutableLongStateOf(settings.remainingMs) }
+    var remainingPercent by remember { mutableFloatStateOf(settings.remainingPercent) }
+
+    // 解锁/锁屏统计
+    var unlockCount by remember { mutableIntStateOf(0) }
+    var lockCount by remember { mutableIntStateOf(0) }
+
+    fun refreshCounts() {
+        val all = activityLog.getAll()
+        unlockCount = all.count { it.type == "unlock" }
+        lockCount = all.count { it.type == "lock" }
     }
-    var isMonitoring by remember { mutableStateOf(false) }
-    var inactivityDuration by remember { mutableStateOf("") }
-    var selectedTab by remember { mutableIntStateOf(0) }
-    
-    // 自动刷新无活动时长
-    LaunchedEffect(Unit) {
-        while (true) {
-            inactivityDuration = activityDetector.formatInactivityDuration()
-            delay(10000) // 每10秒更新一次
+
+    LaunchedEffect(Unit) { refreshCounts() }
+
+    // 页面回到前台时刷新数据（从设置页/历史页返回）
+    DisposableEffect(Unit) {
+        val activity = context as? androidx.activity.ComponentActivity
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshCounts()
+            }
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose { activity?.lifecycle?.removeObserver(observer) }
+    }
+
+    // 崩溃日志
+    var crashLog by remember { mutableStateOf(CrashLogger.readLog(context)) }
+    var showCrashLog by remember { mutableStateOf(CrashLogger.hasLog(context)) }
+
+    // 服务错误
+    var serviceError by remember { mutableStateOf<String?>(null) }
+
+    // 权限弹窗
+    var showPermissionDialog by remember { mutableStateOf(false) }
+    var pendingPermission by remember { mutableStateOf("") }
+
+    // 通知权限
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            context.startForegroundService(Intent(context, MonitorService::class.java))
+            isMonitoring = true
+            activityLog.addEntry("monitor_start")
+            refreshCounts()
+            Toast.makeText(context, "监控已启动", Toast.LENGTH_SHORT).show()
+            Handler(context.mainLooper).postDelayed({
+                val err = MonitorService.consumeLastError()
+                if (err != null) {
+                    serviceError = err
+                    isMonitoring = false
+                    refreshCounts()
+                }
+            }, 1500)
+        } else {
+            showPermissionDialog = true
+            pendingPermission = "通知"
         }
     }
-    
-    // 检查服务状态
-    LaunchedEffect(Unit) {
-        isMonitoring = MonitorService.isRunning
+
+    LaunchedEffect(isMonitoring) {
+        while (isMonitoring) {
+            remainingMs = settings.remainingMs
+            remainingPercent = settings.remainingPercent
+            delay(1000)
+        }
     }
-    
+
+    fun startMonitoring() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            context.startForegroundService(Intent(context, MonitorService::class.java))
+            isMonitoring = true
+            activityLog.addEntry("monitor_start")
+            refreshCounts()
+            Handler(context.mainLooper).postDelayed({
+                val err = MonitorService.consumeLastError()
+                if (err != null) {
+                    serviceError = err
+                    isMonitoring = false
+                    refreshCounts()
+                }
+            }, 1500)
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { 
-                    Text(
-                        stringResource(R.string.app_name),
-                        fontWeight = FontWeight.Bold
-                    ) 
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                ),
+                title = { Text("DeadManSwitch") },
                 actions = {
-                    IconButton(
-                        onClick = { 
-                            // 打开设置
-                            selectedTab = 2
-                        }
-                    ) {
+                    IconButton(onClick = { context.startActivity(Intent(context, LogActivity::class.java)) }) {
+                        Icon(Icons.Default.List, contentDescription = "活动历史")
+                    }
+                    IconButton(onClick = { context.startActivity(Intent(context, SettingsActivity::class.java)) }) {
                         Icon(Icons.Default.Settings, contentDescription = "设置")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             )
-        },
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Home, contentDescription = "主页") },
-                    label = { Text("状态") },
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 }
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Contacts, contentDescription = "联系人") },
-                    label = { Text(stringResource(R.string.emergency_contacts)) },
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 }
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Settings, contentDescription = "设置") },
-                    label = { Text(stringResource(R.string.settings)) },
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 }
-                )
-            }
         }
     ) { padding ->
-        Box(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            when (selectedTab) {
-                0 -> StatusTab(
-                    isMonitoring = isMonitoring,
-                    inactivityDuration = inactivityDuration,
-                    thresholdHours = thresholdHours,
-                    onThresholdChange = { 
-                        thresholdHours = it
-                        prefs.edit().putFloat("threshold_hours", it).apply()
-                    },
-                    onToggleMonitoring = {
-                        try {
-                            if (isMonitoring) {
-                                Logging.logMonitoringEvent("Stopping monitoring service")
-                                context.stopService(Intent(context, MonitorService::class.java))
-                                Logging.d("MainActivity", "Service stop requested")
-                            } else {
-                                Logging.logMonitoringEvent("Starting monitoring service")
-                                context.startForegroundService(Intent(context, MonitorService::class.java))
-                                Logging.d("MainActivity", "Foreground service start requested")
-                            }
-                            isMonitoring = !isMonitoring
-                        } catch (e: Exception) {
-                            Logging.e("MainActivity", "Failed to toggle monitoring service", e)
-                        }
-                    },
-                    onResetTimer = {
-                        activityDetector.updateLastActivity()
-                        inactivityDuration = activityDetector.formatInactivityDuration()
-                    }
-                )
-                1 -> ContactsTab()
-                2 -> SettingsTab(
-                    autoStart = prefs.getBoolean("auto_start", true),
-                    onAutoStartChange = {
-                        prefs.edit().putBoolean("auto_start", it).apply()
-                    },
-                    darkMode = prefs.getBoolean("dark_mode", false),
-                    onDarkModeChange = {
-                        prefs.edit().putBoolean("dark_mode", it).apply()
-                        // 注意：实际深色模式切换需要重启 Activity
-                    }
-                )
-            }
-        }
-    }
-}
+            item { Spacer(modifier = Modifier.height(8.dp)) }
 
-@Composable
-fun StatusTab(
-    isMonitoring: Boolean,
-    inactivityDuration: String,
-    thresholdHours: Float,
-    onThresholdChange: (Float) -> Unit,
-    onToggleMonitoring: () -> Unit,
-    onResetTimer: () -> Unit
-) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
             // 状态卡片
-            StatusCard(
-                isMonitoring = isMonitoring,
-                inactivityDuration = inactivityDuration,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        
-        item {
-            // 阈值设置卡片
-            ThresholdCard(
-                thresholdHours = thresholdHours,
-                onThresholdChange = onThresholdChange,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        
-        item {
-            // 控制按钮
-            ControlButtons(
-                isMonitoring = isMonitoring,
-                onToggleMonitoring = onToggleMonitoring,
-                onResetTimer = onResetTimer,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        
-        item {
-            // 统计信息（占位符）
-            StatisticsCard(modifier = Modifier.fillMaxWidth())
-        }
-    }
-}
-
-@Composable
-fun StatusCard(
-    isMonitoring: Boolean,
-    inactivityDuration: String,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isMonitoring) 
-                MaterialTheme.colorScheme.primaryContainer 
-            else 
-                MaterialTheme.colorScheme.errorContainer
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = if (isMonitoring) 
-                    stringResource(R.string.monitoring_status_running)
-                else 
-                    stringResource(R.string.monitoring_status_stopped),
-                style = MaterialTheme.typography.headlineMedium,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold
-            )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.AccessTime,
-                    contentDescription = "时间",
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Text(
-                    text = "${stringResource(R.string.last_activity_label)}: $inactivityDuration",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontSize = 18.sp
-                )
-            }
-            
-            if (!isMonitoring) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "服务已停止，点击下方按钮开始监控",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun ThresholdCard(
-    thresholdHours: Float,
-    onThresholdChange: (Float) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    Icons.Default.Timer,
-                    contentDescription = "阈值",
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = stringResource(R.string.threshold_label),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            
-            Text(
-                text = stringResource(R.string.threshold_description).format(thresholdHours.toInt()),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            
-            Slider(
-                value = thresholdHours,
-                onValueChange = onThresholdChange,
-                valueRange = 1f..48f,
-                steps = 47,
-                modifier = Modifier.fillMaxWidth()
-            )
-            
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("1h", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("24h", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("48h", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
-}
-
-@Composable
-fun ControlButtons(
-    isMonitoring: Boolean,
-    onToggleMonitoring: () -> Unit,
-    onResetTimer: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Button(
-            onClick = onToggleMonitoring,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isMonitoring) 
-                    MaterialTheme.colorScheme.error 
-                else 
-                    MaterialTheme.colorScheme.primary
-            )
-        ) {
-            Icon(
-                if (isMonitoring) Icons.Default.Stop else Icons.Default.PlayArrow,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = if (isMonitoring) 
-                    stringResource(R.string.stop_monitoring)
-                else 
-                    stringResource(R.string.start_monitoring),
-                fontSize = 16.sp
-            )
-        }
-        
-        OutlinedButton(
-            onClick = onResetTimer,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Icon(Icons.Default.Refresh, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.manual_reset))
-        }
-        
-        // 测试警报按钮
-        OutlinedButton(
-            onClick = {
-                // TODO: 测试警报功能
-            },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = MaterialTheme.colorScheme.error
-            )
-        ) {
-            Icon(Icons.Default.Warning, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.alarm_test))
-        }
-    }
-}
-
-@Composable
-fun StatisticsCard(modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    Icons.Default.BarChart,
-                    contentDescription = "统计",
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = stringResource(R.string.activity_stats),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            
-            // 占位统计信息
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                StatItem(
-                    title = stringResource(R.string.today),
-                    value = "8.5h",
-                    icon = Icons.Default.Today
-                )
-                StatItem(
-                    title = stringResource(R.string.week),
-                    value = "62h",
-                    icon = Icons.Default.DateRange
-                )
-                StatItem(
-                    title = stringResource(R.string.month),
-                    value = "240h",
-                    icon = Icons.Default.CalendarMonth
-                )
-            }
-            
-            Text(
-                text = "统计功能开发中...",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-        }
-    }
-}
-
-@Composable
-fun StatItem(
-    title: String,
-    value: String,
-    icon: ImageVector
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(
-            icon,
-            contentDescription = title,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-fun ContactsTab() {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            Icons.Default.Contacts,
-            contentDescription = "联系人",
-            modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "紧急联系人功能",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "开发中...\n未来版本将支持添加紧急联系人，\n在警报触发时自动通知他们。",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(24.dp))
-        Button(
-            onClick = { /* TODO */ },
-            enabled = false
-        ) {
-            Icon(Icons.Default.Add, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.add_contact))
-        }
-    }
-}
-
-@Composable
-fun SettingsTab(
-    autoStart: Boolean,
-    onAutoStartChange: (Boolean) -> Unit,
-    darkMode: Boolean,
-    onDarkModeChange: (Boolean) -> Unit
-) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Text(
-                text = "设置",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
-        
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = when {
+                            !isMonitoring -> MaterialTheme.colorScheme.errorContainer
+                            remainingPercent > 0.8f -> MaterialTheme.colorScheme.errorContainer
+                            remainingPercent > 0.5f -> MaterialTheme.colorScheme.tertiaryContainer
+                            else -> MaterialTheme.colorScheme.primaryContainer
+                        }
+                    )
                 ) {
-                    // 开机自启动
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Column {
-                            Text(
-                                text = stringResource(R.string.auto_start),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                text = "设备重启后自动启动监控",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = autoStart,
-                            onCheckedChange = onAutoStartChange
+                        Text(
+                            text = if (isMonitoring) "🛡️ 监控中" else "🔴 已停止",
+                            style = MaterialTheme.typography.headlineMedium
                         )
-                    }
-                    
-                    Divider()
-                    
-                    // 深色模式
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        if (isMonitoring) {
+                            val h = remainingMs / (1000 * 60 * 60)
+                            val m = (remainingMs % (1000 * 60 * 60)) / (1000 * 60)
+                            val s = (remainingMs % (1000 * 60)) / 1000
                             Text(
-                                text = stringResource(R.string.enable_dark_mode),
-                                style = MaterialTheme.typography.titleMedium
+                                text = String.format("%02d:%02d:%02d", h, m, s),
+                                style = MaterialTheme.typography.displayMedium,
+                                fontFamily = FontFamily.Monospace
                             )
+                            Text("距离警报触发", style = MaterialTheme.typography.bodySmall)
+                            Spacer(modifier = Modifier.height(12.dp))
+                            LinearProgressIndicator(
+                                progress = { remainingPercent },
+                                modifier = Modifier.fillMaxWidth().height(8.dp),
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "跟随系统或手动选择主题",
-                                style = MaterialTheme.typography.bodySmall,
+                                text = "已用 ${(remainingPercent * 100).toInt()}% | 阈值 ${thresholdHours.toInt()}h",
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        } else {
+                            Text("点击下方按钮开始监控", style = MaterialTheme.typography.bodyMedium)
                         }
-                        Switch(
-                            checked = darkMode,
-                            onCheckedChange = onDarkModeChange
+                    }
+                }
+            }
+
+            // 解锁/锁屏统计
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("📱 手机使用统计", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            StatChip("🔓 解锁", unlockCount)
+                            StatChip("🔒 锁屏", lockCount)
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        // 温馨提示
+                        val tip = getMilestoneTip(unlockCount, lockCount)
+                        if (tip != null) {
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                                )
+                            ) {
+                                Text(
+                                    tip,
+                                    modifier = Modifier.padding(12.dp),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 阈值
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("无活动阈值", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "${thresholdHours.toInt()} 小时",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Text(
+                            "超过此时间无活动将触发警报",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Slider(
+                            value = thresholdHours,
+                            onValueChange = { thresholdHours = it; settings.thresholdHours = it },
+                            valueRange = 1f..48f,
+                            steps = 47,
+                            enabled = !isMonitoring
                         )
                     }
                 }
             }
-        }
-        
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "关于",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                    
-                    Text(
-                        text = "安全监控 v1.0\n基于 GitHub Actions 自动构建",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    
+
+            // 按钮
+            item {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (isMonitoring) {
+                        Button(
+                            onClick = { showStopDialog = true },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) { Text("停止监控") }
+                    } else {
+                        Button(onClick = { startMonitoring() }, modifier = Modifier.weight(1f)) { Text("开始监控") }
+                    }
                     OutlinedButton(
-                        onClick = { /* TODO: 打开关于页面 */ },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("检查更新")
-                    }
+                        onClick = {
+                            settings.resetActivity()
+                            remainingMs = settings.remainingMs
+                            remainingPercent = settings.remainingPercent
+                            activityLog.addEntry("manual_reset")
+                            refreshCounts()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("手动重置") }
                 }
             }
+
+            item { Spacer(modifier = Modifier.height(16.dp)) }
         }
-        
-        item {
-            Text(
-                text = stringResource(R.string.hint_text),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(vertical = 16.dp)
-            )
-        }
+    }
+
+    // 停止确认
+    if (showStopDialog) {
+        AlertDialog(
+            onDismissRequest = { showStopDialog = false },
+            title = { Text("确认停止？") },
+            text = { Text("停止监控后将不再检测您的活动状态。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    context.stopService(Intent(context, MonitorService::class.java))
+                    isMonitoring = false
+                    showStopDialog = false
+                    activityLog.addEntry("monitor_stop")
+                    refreshCounts()
+                }) { Text("确认停止", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { showStopDialog = false }) { Text("取消") } }
+        )
+    }
+
+    // 崩溃日志
+    if (showCrashLog && crashLog.isNotEmpty()) {
+        val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+        AlertDialog(
+            onDismissRequest = { showCrashLog = false },
+            title = { Text("⚠️ 上次崩溃报告") },
+            text = {
+                Column {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = {
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(crashLog))
+                            Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                        }) { Text("📋 复制全部") }
+                    }
+                    LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                        item {
+                            SelectionContainer {
+                                Text(
+                                    crashLog,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCrashLog = false; CrashLogger.clearLog(context); crashLog = ""
+                }) { Text("关闭并清除") }
+            },
+            dismissButton = { TextButton(onClick = { showCrashLog = false }) { Text("仅关闭") } }
+        )
+    }
+
+    // 服务启动错误弹窗
+    if (serviceError != null) {
+        val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+        AlertDialog(
+            onDismissRequest = { serviceError = null },
+            title = { Text("❌ 监控服务启动失败") },
+            text = {
+                Column {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = {
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(serviceError!!))
+                            Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                        }) { Text("📋 复制") }
+                    }
+                    SelectionContainer {
+                        Text(
+                            serviceError!!,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { serviceError = null }) { Text("关闭") } }
+        )
+    }
+
+    // 权限被拒绝 → 引导去设置页
+    if (showPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionDialog = false },
+            title = { Text("需要${pendingPermission}权限") },
+            text = { Text("请在系统设置中手动开启${pendingPermission}权限，否则此功能无法正常使用。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPermissionDialog = false
+                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.fromParts("package", context.packageName, null)
+                    }
+                    context.startActivity(intent)
+                }) { Text("去设置") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPermissionDialog = false }) { Text("取消") }
+            }
+        )
+    }
+}
+
+/**
+ * 温馨调皮提示语
+ */
+fun getMilestoneTip(unlockCount: Int, lockCount: Int): String? {
+    return when {
+        unlockCount == 0 -> null
+        unlockCount < 10 -> "👀 今天还挺克制的嘛，才解锁了 ${unlockCount} 次"
+        unlockCount < 30 -> "📱 解锁了 ${unlockCount} 次，正常操作"
+        unlockCount < 50 -> "🤭 已经解锁 ${unlockCount} 次了，是不是在等什么消息？"
+        unlockCount < 100 -> "😵 ${unlockCount} 次了！你确定不是在用手机做俯卧撑？"
+        unlockCount < 200 -> "🤯 破百了！解锁 ${unlockCount} 次，手机屏幕都要被你磨秃了"
+        unlockCount < 500 -> "💀 ${unlockCount} 次…你和手机的感情比我和代码还深"
+        unlockCount < 1000 -> "🏆 恭喜解锁 ${unlockCount} 次！你应该是手机的 VIP 用户"
+        else -> "👑 解锁 ${unlockCount} 次！建议手机给你发个年终奖 🎉"
     }
 }
