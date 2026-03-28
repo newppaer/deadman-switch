@@ -5,15 +5,19 @@ import android.content.Context
 import android.content.Intent
 import com.example.deadmanswitch.data.ActivityLogManager
 import com.example.deadmanswitch.data.SettingsManager
+import com.example.deadmanswitch.service.MonitorWorker
 
-// 仅通过 Manifest 静态接收 ACTION_USER_PRESENT（解锁）
-// ACTION_SCREEN_OFF 在 Android 10+ 不允许静态注册，在 MonitorService 中动态注册
 class ScreenUnlockReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_USER_PRESENT) {
             val settings = SettingsManager(context)
             settings.resetActivity()
             ActivityLogManager(context).addEntry("unlock")
+
+            // 触发一次即时检查（重置警报状态）
+            if (settings.isMonitoring) {
+                MonitorWorker.runImmediate(context)
+            }
         }
     }
 }

@@ -32,7 +32,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.example.deadmanswitch.data.ActivityLogManager
 import com.example.deadmanswitch.data.SettingsManager
-import com.example.deadmanswitch.service.MonitorService
+import com.example.deadmanswitch.service.MonitorScheduler
 import com.example.deadmanswitch.ui.theme.DeadManSwitchTheme
 import kotlinx.coroutines.delay
 
@@ -56,7 +56,7 @@ fun MainScreen() {
     val settings = remember { SettingsManager(context) }
     val activityLog = remember { ActivityLogManager(context) }
 
-    var isMonitoring by remember { mutableStateOf(MonitorService.isRunning(context)) }
+    var isMonitoring by remember { mutableStateOf(MonitorScheduler.isRunning(context)) }
     var thresholdHours by remember { mutableFloatStateOf(settings.thresholdHours) }
     var showStopDialog by remember { mutableStateOf(false) }
     var remainingMs by remember { mutableLongStateOf(settings.remainingMs) }
@@ -90,37 +90,26 @@ fun MainScreen() {
     var crashLog by remember { mutableStateOf(CrashLogger.readLog(context)) }
     var showCrashLog by remember { mutableStateOf(CrashLogger.hasLog(context)) }
 
-    // 服务错误
-    var serviceError by remember { mutableStateOf<String?>(null) }
-
     // 权限弹窗
     var showPermissionDialog by remember { mutableStateOf(false) }
     var pendingPermission by remember { mutableStateOf("") }
 
-    // 通知权限
+    // 通知权限（WorkManager 不需要前台服务通知，但警报仍需要通知权限）
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            context.startForegroundService(Intent(context, MonitorService::class.java))
+            MonitorScheduler.start(context)
             isMonitoring = true
-            activityLog.addEntry("monitor_start")
             refreshCounts()
             Toast.makeText(context, "监控已启动", Toast.LENGTH_SHORT).show()
-            Handler(context.mainLooper).postDelayed({
-                val err = MonitorService.consumeLastError()
-                if (err != null) {
-                    serviceError = err
-                    isMonitoring = false
-                    refreshCounts()
-                }
-            }, 1500)
         } else {
             showPermissionDialog = true
             pendingPermission = "通知"
         }
     }
 
+    // 定时刷新倒计时（每秒更新 UI，不影响后台耗电）
     LaunchedEffect(isMonitoring) {
         while (isMonitoring) {
             remainingMs = settings.remainingMs
@@ -136,18 +125,10 @@ fun MainScreen() {
         ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            context.startForegroundService(Intent(context, MonitorService::class.java))
+            MonitorScheduler.start(context)
             isMonitoring = true
-            activityLog.addEntry("monitor_start")
             refreshCounts()
-            Handler(context.mainLooper).postDelayed({
-                val err = MonitorService.consumeLastError()
-                if (err != null) {
-                    serviceError = err
-                    isMonitoring = false
-                    refreshCounts()
-                }
-            }, 1500)
+            Toast.makeText(context, "监控已启动（WorkManager 低功耗模式）", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -325,10 +306,9 @@ fun MainScreen() {
             text = { Text("停止监控后将不再检测您的活动状态。") },
             confirmButton = {
                 TextButton(onClick = {
-                    context.stopService(Intent(context, MonitorService::class.java))
+                    MonitorScheduler.stop(context)
                     isMonitoring = false
                     showStopDialog = false
-                    activityLog.addEntry("monitor_stop")
                     refreshCounts()
                 }) { Text("确认停止", color = MaterialTheme.colorScheme.error) }
             },
@@ -369,33 +349,6 @@ fun MainScreen() {
                 }) { Text("关闭并清除") }
             },
             dismissButton = { TextButton(onClick = { showCrashLog = false }) { Text("仅关闭") } }
-        )
-    }
-
-    // 服务启动错误弹窗
-    if (serviceError != null) {
-        val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
-        AlertDialog(
-            onDismissRequest = { serviceError = null },
-            title = { Text("❌ 监控服务启动失败") },
-            text = {
-                Column {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = {
-                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(serviceError!!))
-                            Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
-                        }) { Text("📋 复制") }
-                    }
-                    SelectionContainer {
-                        Text(
-                            serviceError!!,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { serviceError = null }) { Text("关闭") } }
         )
     }
 

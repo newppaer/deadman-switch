@@ -28,8 +28,5 @@
     <string name="minutes">分钟</string>
     <string name="alert_title">⚠️ 安全警报</string>
     <string name="alert_message">已超过 %d 小时未检测到活动</string>
-    <string name="notification_channel_monitor">监控通知</string>
     <string name="notification_channel_alert">警报通知</string>
-    <string name="notification_title_monitoring">安全监控运行中</string>
-    <string name="notification_text_monitoring">正在监听您的活动状态</string>
 </resources>

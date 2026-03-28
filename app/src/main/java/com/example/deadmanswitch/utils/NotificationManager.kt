@@ -1,5 +1,4 @@
 package com.example.deadmanswitch.utils
-import com.example.deadmanswitch.utils.Logging
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -10,85 +9,38 @@ import android.content.Intent
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
-import android.os.Build.VERSION_CODES
 import androidx.core.app.NotificationCompat
 import com.example.deadmanswitch.MainActivity
-import com.example.deadmanswitch.R
 
 class AppNotificationManager(private val context: Context) {
     
     companion object {
-        const val CHANNEL_MONITOR = "monitor_channel"
         const val CHANNEL_ALERT = "alert_channel"
-        const val NOTIFICATION_ID_MONITOR = 1
         const val NOTIFICATION_ID_ALERT = 999
     }
     
     init {
-        Logging.logNotificationEvent("AppNotificationManager initialized")
         createNotificationChannels()
     }
     
     private fun createNotificationChannels() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Logging.logNotificationEvent("Creating notification channels")
-                
-                val monitorChannel = NotificationChannel(
-                    CHANNEL_MONITOR,
-                    context.getString(R.string.notification_channel_monitor),
-                    AndroidNotificationManager.IMPORTANCE_LOW
-                ).apply {
-                    description = "监控服务运行状态通知"
-                    setShowBadge(false)
-                }
-                
-                val alertChannel = NotificationChannel(
-                    CHANNEL_ALERT,
-                    context.getString(R.string.notification_channel_alert),
-                    AndroidNotificationManager.IMPORTANCE_HIGH
-                ).apply {
-                    description = "安全警报通知"
-                    enableVibration(true)
-                    vibrationPattern = longArrayOf(0, 500, 200, 500, 200, 500)
-                    // 使用系统默认警报音
-                    val alarmSound: Uri? = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                    setSound(alarmSound, null)
-                    Logging.d("AppNotificationManager", "Alert channel sound: $alarmSound")
-                }
-                
-                val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) 
-                    as AndroidNotificationManager
-                
-                notificationManager.createNotificationChannel(monitorChannel)
-                notificationManager.createNotificationChannel(alertChannel)
-                
-                Logging.logNotificationEvent("Notification channels created", "monitor_channel, alert_channel")
-            } else {
-                Logging.d("AppNotificationManager", "Android version < O, skipping channel creation")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val alertChannel = NotificationChannel(
+                CHANNEL_ALERT,
+                "安全警报",
+                AndroidNotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "安全警报通知"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 500, 200, 500, 200, 500)
+                val alarmSound: Uri? = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                setSound(alarmSound, null)
             }
-        } catch (e: Exception) {
-            Logging.e("AppNotificationManager", "Failed to create notification channels", e)
+            
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) 
+                as AndroidNotificationManager
+            manager.createNotificationChannel(alertChannel)
         }
-    }
-    
-    fun createMonitoringNotification(): Notification {
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context, 0, intent, 
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        
-        return NotificationCompat.Builder(context, CHANNEL_MONITOR)
-            .setContentTitle(context.getString(R.string.notification_title_monitoring))
-            .setContentText(context.getString(R.string.notification_text_monitoring))
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setContentIntent(pendingIntent)
-            .build()
     }
     
     fun createAlertNotification(hours: Long): Notification {
@@ -101,8 +53,8 @@ class AppNotificationManager(private val context: Context) {
         )
         
         return NotificationCompat.Builder(context, CHANNEL_ALERT)
-            .setContentTitle(context.getString(R.string.alert_title))
-            .setContentText(context.getString(R.string.alert_message).format(hours))
+            .setContentTitle("⚠️ 安全警报")
+            .setContentText("已超过 ${hours} 小时未检测到活动！")
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
@@ -115,12 +67,10 @@ class AppNotificationManager(private val context: Context) {
     
     fun sendAlert(hours: Long) {
         try {
-            Logging.logNotificationEvent("Sending alert notification", "hours=$hours")
             val notification = createAlertNotification(hours)
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) 
                 as AndroidNotificationManager
             manager.notify(NOTIFICATION_ID_ALERT, notification)
-            Logging.logNotificationEvent("Alert notification sent", "id=$NOTIFICATION_ID_ALERT")
         } catch (e: Exception) {
             Logging.e("AppNotificationManager", "Failed to send alert notification", e)
         }
@@ -128,11 +78,9 @@ class AppNotificationManager(private val context: Context) {
     
     fun cancelAlert() {
         try {
-            Logging.logNotificationEvent("Canceling alert notification")
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) 
                 as AndroidNotificationManager
             manager.cancel(NOTIFICATION_ID_ALERT)
-            Logging.logNotificationEvent("Alert notification canceled")
         } catch (e: Exception) {
             Logging.e("AppNotificationManager", "Failed to cancel alert notification", e)
         }
