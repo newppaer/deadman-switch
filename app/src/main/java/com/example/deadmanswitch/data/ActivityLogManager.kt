@@ -37,6 +37,19 @@ class ActivityLogManager(context: Context) {
         return list
     }
 
+    /**
+     * 获取今日的活动记录
+     */
+    fun getTodayEntries(): List<ActivityEntry> {
+        val calendar = java.util.Calendar.getInstance()
+        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        calendar.set(java.util.Calendar.MINUTE, 0)
+        calendar.set(java.util.Calendar.SECOND, 0)
+        calendar.set(java.util.Calendar.MILLISECOND, 0)
+        val startOfDay = calendar.timeInMillis
+        return getAll().filter { it.timestamp >= startOfDay }
+    }
+
     fun clear() {
         prefs.edit().remove(KEY_LOG).apply()
     }

@@ -5,8 +5,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
@@ -41,10 +39,33 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             val settings = remember { SettingsManager(this) }
-            val darkMode by remember { mutableIntStateOf(settings.darkMode) }
-            DeadManSwitchTheme(darkMode = darkMode) {
-                MainScreen()
+            var darkMode by remember { mutableIntStateOf(settings.darkMode) }
+
+            // 从设置页返回时刷新 darkMode
+            DisposableEffect(Unit) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) {
+                        darkMode = settings.darkMode
+                    }
+                }
+                lifecycle.addObserver(observer)
+                onDispose { lifecycle.removeObserver(observer) }
             }
+
+            key(darkMode) {
+                DeadManSwitchTheme(darkMode = darkMode) {
+                    MainScreen()
+                }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 双重保险：每次回到前台都重置活动时间
+        val settings = SettingsManager(this)
+        if (MonitorScheduler.isRunning(this)) {
+            settings.resetActivity()
         }
     }
 }
@@ -62,14 +83,14 @@ fun MainScreen() {
     var remainingMs by remember { mutableLongStateOf(settings.remainingMs) }
     var remainingPercent by remember { mutableFloatStateOf(settings.remainingPercent) }
 
-    // 解锁/锁屏统计
+    // 解锁/锁屏统计（今日）
     var unlockCount by remember { mutableIntStateOf(0) }
     var lockCount by remember { mutableIntStateOf(0) }
 
     fun refreshCounts() {
-        val all = activityLog.getAll()
-        unlockCount = all.count { it.type == "unlock" }
-        lockCount = all.count { it.type == "lock" }
+        val today = activityLog.getTodayEntries()
+        unlockCount = today.count { it.type == "unlock" }
+        lockCount = today.count { it.type == "lock" }
     }
 
     LaunchedEffect(Unit) { refreshCounts() }
@@ -80,6 +101,8 @@ fun MainScreen() {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 refreshCounts()
+                // 确保监控状态同步
+                isMonitoring = MonitorScheduler.isRunning(context)
             }
         }
         activity?.lifecycle?.addObserver(observer)
@@ -212,7 +235,7 @@ fun MainScreen() {
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("📱 手机使用统计", style = MaterialTheme.typography.titleMedium)
+                        Text("📱 今日使用统计", style = MaterialTheme.typography.titleMedium)
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -260,9 +283,12 @@ fun MainScreen() {
                         )
                         Slider(
                             value = thresholdHours,
-                            onValueChange = { thresholdHours = it; settings.thresholdHours = it },
+                            onValueChange = {
+                                thresholdHours = it
+                                settings.thresholdHours = it
+                            },
                             valueRange = 1f..48f,
-                            steps = 47,
+                            steps = 46, // 1-48 共47个整数值，步数=47-1=46
                             enabled = !isMonitoring
                         )
                     }
