@@ -1,11 +1,12 @@
 package com.example.deadmanswitch
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Process
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -70,6 +71,27 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * 检查 UsageStats 权限
+ */
+fun hasUsageStatsPermission(context: android.content.Context): Boolean {
+    val appOps = context.getSystemService(android.content.Context.APP_OPS_SERVICE) as AppOpsManager
+    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        appOps.unsafeCheckOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName
+        )
+    } else {
+        appOps.checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName
+        )
+    }
+    return mode == AppOpsManager.MODE_ALLOWED
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen() {
@@ -83,6 +105,9 @@ fun MainScreen() {
     var remainingMs by remember { mutableLongStateOf(settings.remainingMs) }
     var remainingPercent by remember { mutableFloatStateOf(settings.remainingPercent) }
 
+    // UsageStats 权限状态
+    var hasUsagePermission by remember { mutableStateOf(hasUsageStatsPermission(context)) }
+
     // 解锁/锁屏统计（今日）
     var unlockCount by remember { mutableIntStateOf(0) }
     var lockCount by remember { mutableIntStateOf(0) }
@@ -91,17 +116,17 @@ fun MainScreen() {
         val today = activityLog.getTodayEntries()
         unlockCount = today.count { it.type == "unlock" }
         lockCount = today.count { it.type == "lock" }
+        hasUsagePermission = hasUsageStatsPermission(context)
     }
 
     LaunchedEffect(Unit) { refreshCounts() }
 
-    // 页面回到前台时刷新数据（从设置页/历史页返回）
+    // 页面回到前台时刷新数据
     DisposableEffect(Unit) {
         val activity = context as? androidx.activity.ComponentActivity
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 refreshCounts()
-                // 确保监控状态同步
                 isMonitoring = MonitorScheduler.isRunning(context)
             }
         }
@@ -117,7 +142,7 @@ fun MainScreen() {
     var showPermissionDialog by remember { mutableStateOf(false) }
     var pendingPermission by remember { mutableStateOf("") }
 
-    // 通知权限（WorkManager 不需要前台服务通知，但警报仍需要通知权限）
+    // 通知权限
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -132,7 +157,7 @@ fun MainScreen() {
         }
     }
 
-    // 定时刷新倒计时（每秒更新 UI，不影响后台耗电）
+    // 定时刷新倒计时
     LaunchedEffect(isMonitoring) {
         while (isMonitoring) {
             remainingMs = settings.remainingMs
@@ -142,6 +167,14 @@ fun MainScreen() {
     }
 
     fun startMonitoring() {
+        // 检查 UsageStats 权限
+        if (!hasUsageStatsPermission(context)) {
+            showPermissionDialog = true
+            pendingPermission = "使用情况访问"
+            return
+        }
+
+        // 检查通知权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
@@ -179,6 +212,32 @@ fun MainScreen() {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item { Spacer(modifier = Modifier.height(8.dp)) }
+
+            // 权限提示卡片
+            if (!hasUsagePermission) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text("⚠️ 需要权限", style = MaterialTheme.typography.titleMedium)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "监控锁屏/解锁事件需要「使用情况访问」权限。请在设置中手动开启。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(onClick = {
+                                val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+                                context.startActivity(intent)
+                            }) {
+                                Text("去开启权限")
+                            }
+                        }
+                    }
+                }
+            }
 
             // 状态卡片
             item {
@@ -245,7 +304,6 @@ fun MainScreen() {
                             StatChip("🔒 锁屏", lockCount)
                         }
                         Spacer(modifier = Modifier.height(12.dp))
-                        // 温馨提示
                         val tip = getMilestoneTip(unlockCount, lockCount)
                         if (tip != null) {
                             Card(
@@ -288,7 +346,7 @@ fun MainScreen() {
                                 settings.thresholdHours = it
                             },
                             valueRange = 1f..48f,
-                            steps = 46, // 1-48 共47个整数值，步数=47-1=46
+                            steps = 46,
                             enabled = !isMonitoring
                         )
                     }
@@ -378,17 +436,28 @@ fun MainScreen() {
         )
     }
 
-    // 权限被拒绝 → 引导去设置页
+    // 权限弹窗
     if (showPermissionDialog) {
         AlertDialog(
             onDismissRequest = { showPermissionDialog = false },
             title = { Text("需要${pendingPermission}权限") },
-            text = { Text("请在系统设置中手动开启${pendingPermission}权限，否则此功能无法正常使用。") },
+            text = {
+                Text(
+                    if (pendingPermission == "使用情况访问")
+                        "锁屏/解锁检测需要「使用情况访问」权限。\n\n请在设置中找到 DeadManSwitch，开启权限。"
+                    else
+                        "请在系统设置中手动开启${pendingPermission}权限，否则此功能无法正常使用。"
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     showPermissionDialog = false
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = Uri.fromParts("package", context.packageName, null)
+                    val intent = if (pendingPermission == "使用情况访问") {
+                        Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+                    } else {
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = android.net.Uri.fromParts("package", context.packageName, null)
+                        }
                     }
                     context.startActivity(intent)
                 }) { Text("去设置") }
