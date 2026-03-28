@@ -61,15 +61,16 @@ object MonitorScheduler {
         settings.isMonitoring = true
         settings.initIfNeeded()
 
-        if (hasUsageStatsPermission(context)) {
-            // 方案B: WorkManager + UsageStatsManager
-            MonitorWorker.schedule(context)
-            Log.d(TAG, "Using WorkManager (UsageStats granted)")
-        } else {
-            // 方案A: 轻量 ScreenEventService
+        // WorkManager 始终运行，负责阈值检查和推送
+        MonitorWorker.schedule(context)
+
+        if (!hasUsageStatsPermission(context)) {
+            // 方案A 补充: 轻量 ScreenEventService 监听屏幕事件
             val intent = Intent(context, ScreenEventService::class.java)
             context.startService(intent)
-            Log.d(TAG, "Using ScreenEventService (UsageStats not granted)")
+            Log.d(TAG, "Mode: WorkManager + ScreenEventService (UsageStats not granted)")
+        } else {
+            Log.d(TAG, "Mode: WorkManager only (UsageStats granted)")
         }
 
         ActivityLogManager(context).addEntry("monitor_start")
@@ -101,6 +102,6 @@ object MonitorScheduler {
      * 获取当前使用的方案
      */
     fun getCurrentMode(context: Context): String {
-        return if (hasUsageStatsPermission(context)) "WorkManager" else "Service"
+        return if (hasUsageStatsPermission(context)) "WorkManager" else "WorkManager + Service"
     }
 }
