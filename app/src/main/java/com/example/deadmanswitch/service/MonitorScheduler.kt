@@ -99,6 +99,14 @@ object MonitorScheduler {
     }
 
     /**
+     * 检查电池优化白名单
+     */
+    fun isBatteryOptimizationIgnored(context: Context): Boolean {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        return powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    /**
      * 获取当前使用的方案
      */
     fun getCurrentMode(context: Context): String {

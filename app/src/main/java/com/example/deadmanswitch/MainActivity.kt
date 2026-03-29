@@ -88,12 +88,16 @@ fun MainScreen() {
     var unlockCount by remember { mutableIntStateOf(0) }
     var lockCount by remember { mutableIntStateOf(0) }
 
+    // 电池优化状态
+    var isBatteryOptimized by remember { mutableStateOf(!MonitorScheduler.isBatteryOptimizationIgnored(context)) }
+
     fun refreshCounts() {
         val today = activityLog.getTodayEntries()
         unlockCount = today.count { it.type == "unlock" }
         lockCount = today.count { it.type == "lock" }
         hasUsagePermission = MonitorScheduler.hasUsageStatsPermission(context)
         currentMode = MonitorScheduler.getCurrentMode(context)
+        isBatteryOptimized = !MonitorScheduler.isBatteryOptimizationIgnored(context)
     }
 
     LaunchedEffect(Unit) { refreshCounts() }
@@ -117,6 +121,9 @@ fun MainScreen() {
     // 权限弹窗
     var showPermissionDialog by remember { mutableStateOf(false) }
     var pendingPermission by remember { mutableStateOf("") }
+
+    // 电池优化弹窗
+    var showBatteryOptDialog by remember { mutableStateOf(false) }
 
     // 通知权限
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -157,6 +164,11 @@ fun MainScreen() {
 
             val modeText = if (hasUsagePermission) "低功耗模式 (WorkManager)" else "兼容模式 (Service)"
             Toast.makeText(context, "监控已启动 · $modeText", Toast.LENGTH_SHORT).show()
+
+            // 兼容模式下检查电池优化
+            if (!hasUsagePermission && isBatteryOptimized) {
+                showBatteryOptDialog = true
+            }
         }
     }
 
@@ -185,27 +197,57 @@ fun MainScreen() {
         ) {
             item { Spacer(modifier = Modifier.height(8.dp)) }
 
-            // 权限提示卡片（可选升级提示）
-            if (!hasUsagePermission && isMonitoring) {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text("💡 省电提示", style = MaterialTheme.typography.titleMedium)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                "当前使用兼容模式。开启「使用情况访问」权限可切换到更低功耗的 WorkManager 模式。",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedButton(onClick = {
-                                MonitorScheduler.initUsageStats(context)
-                                val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
-                                context.startActivity(intent)
-                            }) {
-                                Text("去开启权限")
+            // 权限/优化提示卡片
+            if (isMonitoring) {
+                // 电池优化警告（兼容模式下）
+                if (!hasUsagePermission && isBatteryOptimized) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text("⚠️ 电池优化已开启", style = MaterialTheme.typography.titleMedium)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "系统可能会杀死后台服务导致监控中断。请关闭电池优化。",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(onClick = {
+                                    val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                                    intent.data = android.net.Uri.parse("package:${context.packageName}")
+                                    context.startActivity(intent)
+                                }) {
+                                    Text("关闭电池优化")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 升级到 WorkManager 提示
+                if (!hasUsagePermission && !isBatteryOptimized) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text("💡 省电提示", style = MaterialTheme.typography.titleMedium)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "开启「使用情况访问」权限可切换到更低功耗的 WorkManager 模式。",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedButton(onClick = {
+                                    MonitorScheduler.initUsageStats(context)
+                                    val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+                                    context.startActivity(intent)
+                                }) {
+                                    Text("去开启权限")
+                                }
                             }
                         }
                     }
@@ -446,6 +488,28 @@ fun MainScreen() {
             },
             dismissButton = {
                 TextButton(onClick = { showPermissionDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
+    // 电池优化弹窗
+    if (showBatteryOptDialog) {
+        AlertDialog(
+            onDismissRequest = { showBatteryOptDialog = false },
+            title = { Text("⚠️ 建议关闭电池优化") },
+            text = {
+                Text("当前使用 Service 兼容模式，如果开启电池优化，系统可能会杀死后台服务导致监控中断。\n\n建议关闭电池优化以确保监控稳定运行。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBatteryOptDialog = false
+                    val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    intent.data = android.net.Uri.parse("package:${context.packageName}")
+                    context.startActivity(intent)
+                }) { Text("去关闭") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatteryOptDialog = false }) { Text("暂时跳过") }
             }
         )
     }
