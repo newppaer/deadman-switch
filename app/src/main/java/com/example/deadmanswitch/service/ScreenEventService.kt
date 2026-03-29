@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import com.example.deadmanswitch.data.ActivityLogManager
+import com.example.deadmanswitch.data.EventRepository
 import com.example.deadmanswitch.data.SettingsManager
 
 /**
@@ -33,12 +34,18 @@ class ScreenEventService : Service() {
                 Intent.ACTION_SCREEN_OFF -> {
                     Log.d(TAG, "Screen OFF")
                     ActivityLogManager(context).addEntry("lock")
+                    // 写入 Room
+                    val repo = EventRepository(context)
+                    kotlinx.coroutines.runBlocking { repo.logEvent("lock") }
                 }
                 Intent.ACTION_USER_PRESENT -> {
                     Log.d(TAG, "User PRESENT (unlock)")
                     val settings = SettingsManager(context)
                     settings.resetActivity()
                     ActivityLogManager(context).addEntry("unlock")
+                    // 写入 Room
+                    val repo = EventRepository(context)
+                    kotlinx.coroutines.runBlocking { repo.logEvent("unlock") }
                 }
             }
         }

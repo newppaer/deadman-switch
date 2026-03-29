@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.example.deadmanswitch.data.ActivityLogManager
+import com.example.deadmanswitch.data.EventRepository
 import com.example.deadmanswitch.data.SettingsManager
 import com.example.deadmanswitch.service.MonitorScheduler
 
@@ -16,6 +17,8 @@ class BootReceiver : BroadcastReceiver() {
                 MonitorScheduler.start(context)
             }
             ActivityLogManager(context).addEntry("boot")
+            // 写入 Room
+            kotlinx.coroutines.runBlocking { EventRepository(context).logEvent("boot") }
         }
     }
 }

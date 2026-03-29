@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.work.*
 import com.example.deadmanswitch.data.ActivityLogManager
 import com.example.deadmanswitch.data.ContactManager
+import com.example.deadmanswitch.data.EventRepository
 import com.example.deadmanswitch.data.SettingsManager
 import com.example.deadmanswitch.push.PushManager
 import java.util.concurrent.TimeUnit
@@ -201,6 +202,7 @@ class MonitorWorker(
 
             // 记录所有事件
             val activityLog = ActivityLogManager(applicationContext)
+            val repo = EventRepository(applicationContext)
             val lastLoggedTime = prefs.getLong("last_logged_event_time", 0)
 
             for (screenEvent in allEvents) {
@@ -208,6 +210,8 @@ class MonitorWorker(
                 if (screenEvent.time <= lastLoggedTime) continue
 
                 activityLog.addEntry(screenEvent.type, screenEvent.time)
+                // 写入 Room 数据库
+                kotlinx.coroutines.runBlocking { repo.logEvent(screenEvent.type, screenEvent.time) }
                 Log.d(TAG, "${screenEvent.type} at ${screenEvent.time}")
 
                 // 只有最新的解锁才重置活动时间
@@ -240,6 +244,9 @@ class MonitorWorker(
         val hours = elapsedMs / (1000 * 60 * 60)
         val activityLog = ActivityLogManager(applicationContext)
         activityLog.addEntry("alert")
+        // 写入 Room
+        val repo = EventRepository(applicationContext)
+        kotlinx.coroutines.runBlocking { repo.logEvent("alert") }
 
         val alertMsg = "⚠️ DeadManSwitch 警报\n已超过 ${hours} 小时未检测到活动，可能遇到紧急情况。"
 

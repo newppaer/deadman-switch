@@ -28,10 +28,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.example.deadmanswitch.data.ActivityLogManager
+import com.example.deadmanswitch.data.EventRepository
 import com.example.deadmanswitch.data.SettingsManager
 import com.example.deadmanswitch.service.MonitorScheduler
 import com.example.deadmanswitch.ui.theme.DeadManSwitchTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,6 +75,7 @@ fun MainScreen() {
     val context = LocalContext.current
     val settings = remember { SettingsManager(context) }
     val activityLog = remember { ActivityLogManager(context) }
+    val repo = remember { EventRepository(context) }
 
     var isMonitoring by remember { mutableStateOf(MonitorScheduler.isRunning(context)) }
     var thresholdHours by remember { mutableFloatStateOf(settings.thresholdHours) }
@@ -98,10 +101,14 @@ fun MainScreen() {
     // 电池优化状态
     var isBatteryOptimized by remember { mutableStateOf(!MonitorScheduler.isBatteryOptimizationIgnored(context)) }
 
+    val scope = rememberCoroutineScope()
+
     fun refreshCounts() {
-        val today = activityLog.getTodayEntries()
-        unlockCount = today.count { it.type == "unlock" }
-        lockCount = today.count { it.type == "lock" }
+        // 从 Room 读取今日数据
+        scope.launch {
+            unlockCount = repo.getTodayCount("unlock")
+            lockCount = repo.getTodayCount("lock")
+        }
         hasUsagePermission = MonitorScheduler.hasUsageStatsPermission(context)
         currentMode = MonitorScheduler.getCurrentMode(context)
         isBatteryOptimized = !MonitorScheduler.isBatteryOptimizationIgnored(context)
@@ -324,25 +331,25 @@ fun MainScreen() {
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("📱 使用统计", style = MaterialTheme.typography.titleMedium)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("📱 今日统计", style = MaterialTheme.typography.titleMedium)
+                            TextButton(onClick = {
+                                context.startActivity(Intent(context, StatsActivity::class.java))
+                            }) {
+                                Text("查看详情 →")
+                            }
+                        }
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text("今日", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
                             StatChip("🔓 解锁", unlockCount)
                             StatChip("🔒 锁屏", lockCount)
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("累计", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly
-                        ) {
-                            StatChip("🔓 解锁", settings.totalUnlockCount)
-                            StatChip("🔒 锁屏", settings.totalLockCount)
-                            StatChip("🔔 警报", settings.totalAlertCount)
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                         val tip = getMilestoneTip(unlockCount, lockCount)
@@ -482,6 +489,7 @@ fun MainScreen() {
                             remainingMs = settings.remainingMs
                             remainingPercent = settings.remainingPercent
                             activityLog.addEntry("manual_reset")
+                            scope.launch { repo.logEvent("manual_reset") }
                             refreshCounts()
                         },
                         modifier = Modifier.weight(1f)

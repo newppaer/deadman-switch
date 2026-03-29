@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Process
 import android.util.Log
 import com.example.deadmanswitch.data.ActivityLogManager
+import com.example.deadmanswitch.data.EventRepository
 import com.example.deadmanswitch.data.SettingsManager
 
 /**
@@ -74,6 +75,7 @@ object MonitorScheduler {
         }
 
         ActivityLogManager(context).addEntry("monitor_start")
+        kotlinx.coroutines.runBlocking { EventRepository(context).logEvent("monitor_start") }
     }
 
     /**
@@ -88,6 +90,7 @@ object MonitorScheduler {
         context.stopService(Intent(context, ScreenEventService::class.java))
 
         ActivityLogManager(context).addEntry("monitor_stop")
+        kotlinx.coroutines.runBlocking { EventRepository(context).logEvent("monitor_stop") }
         Log.d(TAG, "Monitoring stopped")
     }
 

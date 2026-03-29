@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("kotlin-kapt")
 }
 
 android {
@@ -39,9 +40,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
-    
-    // Room database (暂时注释，等基础功能稳定后再添加)
-    // implementation("androidx.room:room-runtime:2.6.1")
-    // implementation("androidx.room:room-ktx:2.6.1")
-    // kapt("androidx.room:room-compiler:2.6.1")
+    // Room database
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    kapt("androidx.room:room-compiler:2.6.1")
 }

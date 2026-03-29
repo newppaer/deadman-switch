@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.example.deadmanswitch.data.ActivityLogManager
+import com.example.deadmanswitch.data.EventRepository
 import com.example.deadmanswitch.data.SettingsManager
 import com.example.deadmanswitch.service.MonitorWorker
 
@@ -13,6 +14,8 @@ class ScreenUnlockReceiver : BroadcastReceiver() {
             val settings = SettingsManager(context)
             settings.resetActivity()
             ActivityLogManager(context).addEntry("unlock")
+            // 写入 Room
+            kotlinx.coroutines.runBlocking { EventRepository(context).logEvent("unlock") }
 
             // 触发一次即时检查（重置警报状态）
             if (settings.isMonitoring) {
