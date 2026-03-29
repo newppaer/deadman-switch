@@ -96,6 +96,7 @@ class MonitorWorker(
 
     /**
      * 使用 UsageStatsManager 检测锁屏/解锁事件
+     * 收集所有事件并按真实时间记录
      */
     private fun detectScreenEvents(settings: SettingsManager) {
         try {
@@ -109,57 +110,59 @@ class MonitorWorker(
             val lastCheckTime = prefs.getLong(KEY_LAST_CHECK_TIME, System.currentTimeMillis() - 15 * 60 * 1000)
             val now = System.currentTimeMillis()
 
+            // 收集所有屏幕事件
+            data class ScreenEvent(val time: Long, val type: String)
+
+            val allEvents = mutableListOf<ScreenEvent>()
             val events = usm.queryEvents(lastCheckTime, now)
             val event = UsageEvents.Event()
-
-            var latestUnlockTime = 0L
-            var latestLockTime = 0L
 
             while (events.hasNextEvent()) {
                 events.getNextEvent(event)
                 when (event.eventType) {
                     UsageEvents.Event.KEYGUARD_HIDDEN -> {
-                        // 解锁
-                        if (event.timeStamp > latestUnlockTime) {
-                            latestUnlockTime = event.timeStamp
-                        }
+                        allEvents.add(ScreenEvent(event.timeStamp, "unlock"))
                     }
                     UsageEvents.Event.KEYGUARD_SHOWN -> {
-                        // 锁屏
-                        if (event.timeStamp > latestLockTime) {
-                            latestLockTime = event.timeStamp
-                        }
+                        allEvents.add(ScreenEvent(event.timeStamp, "lock"))
                     }
                 }
             }
+
+            // 按时间排序
+            allEvents.sortBy { it.time }
 
             // 更新最后检查时间
             prefs.edit().putLong(KEY_LAST_CHECK_TIME, now).apply()
 
-            // 处理解锁事件
-            if (latestUnlockTime > 0) {
-                val activityLog = ActivityLogManager(applicationContext)
-                val lastLoggedUnlock = prefs.getLong("last_logged_unlock", 0)
+            if (allEvents.isEmpty()) {
+                Log.d(TAG, "No screen events since $lastCheckTime")
+                return
+            }
 
-                if (latestUnlockTime > lastLoggedUnlock) {
+            // 记录所有事件
+            val activityLog = ActivityLogManager(applicationContext)
+            val lastLoggedTime = prefs.getLong("last_logged_event_time", 0)
+
+            for (screenEvent in allEvents) {
+                // 跳过已记录的事件
+                if (screenEvent.time <= lastLoggedTime) continue
+
+                activityLog.addEntry(screenEvent.type, screenEvent.time)
+                Log.d(TAG, "${screenEvent.type} at ${screenEvent.time}")
+
+                // 只有最新的解锁才重置活动时间
+                if (screenEvent.type == "unlock") {
                     settings.resetActivity()
-                    activityLog.addEntry("unlock")
-                    prefs.edit().putLong("last_logged_unlock", latestUnlockTime).apply()
-                    Log.d(TAG, "Unlock detected at $latestUnlockTime")
                 }
             }
 
-            // 处理锁屏事件
-            if (latestLockTime > 0) {
-                val activityLog = ActivityLogManager(applicationContext)
-                val lastLoggedLock = prefs.getLong("last_logged_lock", 0)
-
-                if (latestLockTime > lastLoggedLock) {
-                    activityLog.addEntry("lock")
-                    prefs.edit().putLong("last_logged_lock", latestLockTime).apply()
-                    Log.d(TAG, "Lock detected at $latestLockTime")
-                }
+            // 记录最新事件时间
+            if (allEvents.isNotEmpty()) {
+                prefs.edit().putLong("last_logged_event_time", allEvents.last().time).apply()
             }
+
+            Log.d(TAG, "Processed ${allEvents.size} screen events")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to detect screen events", e)

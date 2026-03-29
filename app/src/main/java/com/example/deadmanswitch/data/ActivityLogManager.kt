@@ -19,7 +19,11 @@ class ActivityLogManager(context: Context) {
     }
 
     fun addEntry(type: String) {
-        val entry = ActivityEntry(System.currentTimeMillis(), type)
+        addEntry(type, System.currentTimeMillis())
+    }
+
+    fun addEntry(type: String, timestamp: Long) {
+        val entry = ActivityEntry(timestamp, type)
         val log = getAll().toMutableList()
         log.add(0, entry)
         if (log.size > MAX_ENTRIES) log.subList(MAX_ENTRIES, log.size).clear()
