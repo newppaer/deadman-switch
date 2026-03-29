@@ -12,6 +12,7 @@ data class ActivityEntry(
 
 class ActivityLogManager(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("deadman_prefs", 0)
+    private val settings = SettingsManager(context)
 
     companion object {
         private const val KEY_LOG = "activity_log"
@@ -28,6 +29,13 @@ class ActivityLogManager(context: Context) {
         log.add(0, entry)
         if (log.size > MAX_ENTRIES) log.subList(MAX_ENTRIES, log.size).clear()
         save(log)
+
+        // 持久化计数
+        when (type) {
+            "unlock" -> settings.incrementUnlockCount()
+            "lock" -> settings.incrementLockCount()
+            "alert" -> settings.incrementAlertCount()
+        }
     }
 
     fun getAll(): List<ActivityEntry> {

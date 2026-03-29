@@ -82,16 +82,75 @@ class MonitorWorker(
         // 1. 使用 UsageStatsManager 检测屏幕事件
         detectScreenEvents(settings)
 
-        // 2. 检查是否超过阈值
-        val elapsedMs = System.currentTimeMillis() - settings.lastActivityTime
-        val thresholdMs = settings.thresholdMs
-        Log.d(TAG, "Check: elapsed=${elapsedMs / 1000}s, threshold=${thresholdMs / 1000}s")
+        // 2. 检查是否在暂停期间
+        if (isInPausePeriod(settings)) {
+            Log.d(TAG, "In pause period, skipping threshold check")
+            schedulePauseEnd(settings)
+            return Result.success()
+        }
 
-        if (elapsedMs >= thresholdMs) {
+        // 3. 检查是否超过阈值（使用扣除暂停时段的 elapsed）
+        val elapsedMs = System.currentTimeMillis() - settings.lastActivityTime
+        val remainingMs = settings.remainingMs
+        Log.d(TAG, "Check: elapsed=${elapsedMs / 1000}s, remaining=${remainingMs / 1000}s (pause deducted)")
+
+        if (remainingMs <= 0) {
             triggerAlert(elapsedMs, settings)
         }
 
         return Result.success()
+    }
+
+    /**
+     * 检查当前是否在暂停时段内
+     */
+    private fun isInPausePeriod(settings: SettingsManager): Boolean {
+        if (!settings.pauseEnabled) return false
+
+        val calendar = java.util.Calendar.getInstance()
+        val currentMinutes = calendar.get(java.util.Calendar.HOUR_OF_DAY) * 60 +
+                            calendar.get(java.util.Calendar.MINUTE)
+        val startMinutes = settings.pauseStartHour * 60 + settings.pauseStartMinute
+        val endMinutes = settings.pauseEndHour * 60 + settings.pauseEndMinute
+
+        return if (endMinutes < startMinutes) {
+            // 跨午夜 (如 22:00-06:00)
+            currentMinutes >= startMinutes || currentMinutes < endMinutes
+        } else {
+            // 同一天内
+            currentMinutes in startMinutes until endMinutes
+        }
+    }
+
+    /**
+     * 调度一个一次性任务在暂停结束时唤醒
+     */
+    private fun schedulePauseEnd(settings: SettingsManager) {
+        if (!settings.pauseEnabled) return
+
+        val calendar = java.util.Calendar.getInstance()
+        val now = calendar.timeInMillis
+
+        // 设置暂停结束时间
+        calendar.set(java.util.Calendar.HOUR_OF_DAY, settings.pauseEndHour)
+        calendar.set(java.util.Calendar.MINUTE, settings.pauseEndMinute)
+        calendar.set(java.util.Calendar.SECOND, 0)
+        calendar.set(java.util.Calendar.MILLISECOND, 0)
+
+        // 如果结束时间已过（今天），设为明天
+        if (calendar.timeInMillis <= now) {
+            calendar.add(java.util.Calendar.DAY_OF_YEAR, 1)
+        }
+
+        val delayMs = calendar.timeInMillis - now
+
+        val request = OneTimeWorkRequestBuilder<MonitorWorker>()
+            .addTag("${WORK_NAME}_pause_end")
+            .setInitialDelay(delayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .build()
+
+        WorkManager.getInstance(applicationContext).enqueue(request)
+        Log.d(TAG, "Scheduled pause end check in ${delayMs / 1000}s")
     }
 
     /**

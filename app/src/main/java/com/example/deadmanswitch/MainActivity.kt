@@ -88,6 +88,13 @@ fun MainScreen() {
     var unlockCount by remember { mutableIntStateOf(0) }
     var lockCount by remember { mutableIntStateOf(0) }
 
+    // 暂停计时状态
+    var pauseEnabled by remember { mutableStateOf(settings.pauseEnabled) }
+    var pauseStartHour by remember { mutableIntStateOf(settings.pauseStartHour) }
+    var pauseStartMinute by remember { mutableIntStateOf(settings.pauseStartMinute) }
+    var pauseEndHour by remember { mutableIntStateOf(settings.pauseEndHour) }
+    var pauseEndMinute by remember { mutableIntStateOf(settings.pauseEndMinute) }
+
     // 电池优化状态
     var isBatteryOptimized by remember { mutableStateOf(!MonitorScheduler.isBatteryOptimizationIgnored(context)) }
 
@@ -317,14 +324,25 @@ fun MainScreen() {
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("📱 今日使用统计", style = MaterialTheme.typography.titleMedium)
+                        Text("📱 使用统计", style = MaterialTheme.typography.titleMedium)
                         Spacer(modifier = Modifier.height(12.dp))
+                        Text("今日", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
                             StatChip("🔓 解锁", unlockCount)
                             StatChip("🔒 锁屏", lockCount)
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("累计", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            StatChip("🔓 解锁", settings.totalUnlockCount)
+                            StatChip("🔒 锁屏", settings.totalLockCount)
+                            StatChip("🔔 警报", settings.totalAlertCount)
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                         val tip = getMilestoneTip(unlockCount, lockCount)
@@ -372,6 +390,76 @@ fun MainScreen() {
                             steps = 46,
                             enabled = !isMonitoring
                         )
+                    }
+                }
+            }
+
+            // 暂停计时
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("⏸️ 暂停计时", style = MaterialTheme.typography.titleMedium)
+                                Text("指定时段内不计时", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = pauseEnabled,
+                                onCheckedChange = {
+                                    pauseEnabled = it
+                                    settings.pauseEnabled = it
+                                }
+                            )
+                        }
+                        if (pauseEnabled) {
+                            Divider()
+                            // 暂停开始时间
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("开始时间")
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    TimePickerButton(
+                                        hour = pauseStartHour,
+                                        minute = pauseStartMinute,
+                                        onTimeChange = { h, m ->
+                                            pauseStartHour = h; pauseStartMinute = m
+                                            settings.pauseStartHour = h; settings.pauseStartMinute = m
+                                        }
+                                    )
+                                }
+                            }
+                            // 暂停结束时间
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("结束时间")
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    TimePickerButton(
+                                        hour = pauseEndHour,
+                                        minute = pauseEndMinute,
+                                        onTimeChange = { h, m ->
+                                            pauseEndHour = h; pauseEndMinute = m
+                                            settings.pauseEndHour = h; settings.pauseEndMinute = m
+                                        }
+                                    )
+                                }
+                            }
+                            Text(
+                                "暂停期间仍检测解锁，但不计时。到达结束时间自动恢复。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -529,5 +617,34 @@ fun getMilestoneTip(unlockCount: Int, lockCount: Int): String? {
         unlockCount < 500 -> "💀 ${unlockCount} 次…你和手机的感情比我和代码还深"
         unlockCount < 1000 -> "🏆 恭喜解锁 ${unlockCount} 次！你应该是手机的 VIP 用户"
         else -> "👑 解锁 ${unlockCount} 次！建议手机给你发个年终奖 🎉"
+    }
+}
+
+/**
+ * 时间选择按钮
+ */
+@Composable
+fun TimePickerButton(
+    hour: Int,
+    minute: Int,
+    onTimeChange: (Int, Int) -> Unit
+) {
+    val context = LocalContext.current
+    val timeText = String.format("%02d:%02d", hour, minute)
+
+    OutlinedButton(
+        onClick = {
+            val dialog = android.app.TimePickerDialog(
+                context,
+                { _, h, m -> onTimeChange(h, m) },
+                hour,
+                minute,
+                true
+            )
+            dialog.show()
+        },
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        Text(timeText, fontFamily = FontFamily.Monospace)
     }
 }
